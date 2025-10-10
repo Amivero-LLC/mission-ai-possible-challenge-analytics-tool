@@ -1,0 +1,154 @@
+================================================================================
+  MISSION CHALLENGE ANALYZER - QUICK START GUIDE
+================================================================================
+
+WHAT YOU HAVE:
+  - Complete mission analysis system with filters
+  - Interactive HTML dashboard
+  - Export capabilities (JSON/CSV)
+  - Automatic mission detection
+
+FILES IN YOUR SYSTEM:
+  1. analyze_missions.py     - Main script (RUN THIS!)
+  2. mission_analyzer.py     - Analysis engine
+  3. generate_dashboard.py   - Dashboard generator
+  4. mission_dashboard.html  - Interactive dashboard
+  5. README.md               - Full documentation
+
+================================================================================
+HOW TO USE (3 SIMPLE STEPS):
+================================================================================
+
+STEP 1: Export chats from OpenWebUI
+  - Go to Admin Panel in OpenWebUI
+  - Export all chats to JSON
+  - Save file to this directory as: all-chats-export-<timestamp>.json
+
+STEP 2: Run the analysis
+  Command: python analyze_missions.py
+
+STEP 3: View results
+  - Dashboard opens automatically in your browser
+  - Or manually open: mission_dashboard.html
+
+================================================================================
+CURRENT STATUS:
+================================================================================
+
+Export Files Found:
+  - all-chats-export-1760024117591.json (old)
+  - all-chats-export-1760058097987.json (latest)
+
+Mission Attempts: 0
+  No employees have attempted the missions yet!
+
+Mission Model Expected:
+  - maip---week-1---challenge-1
+  - maip---week-1---challenge-2
+  - etc.
+
+Mission URL for Employees:
+  https://amichat.prod.amivero-solutions.com/?model=maip---week-1---challenge-1
+
+================================================================================
+COMMON COMMANDS:
+================================================================================
+
+Basic analysis:
+  python analyze_missions.py
+
+Filter by week 1:
+  python analyze_missions.py --week 1
+
+Filter by challenge 1:
+  python analyze_missions.py --challenge 1
+
+Export to CSV:
+  python analyze_missions.py --export-csv
+
+Export to JSON:
+  python analyze_missions.py --export-json
+
+Get help:
+  python analyze_missions.py --help
+
+================================================================================
+WHAT HAPPENS NEXT:
+================================================================================
+
+1. SHARE MISSION LINK WITH EMPLOYEES
+   Send them: https://amichat.prod.amivero-solutions.com/?model=maip---week-1---challenge-1
+
+2. WAIT FOR PARTICIPATION
+   Employees attempt the missions
+
+3. EXPORT NEW DATA
+   Get updated chat export from OpenWebUI
+
+4. RUN ANALYSIS AGAIN
+   python analyze_missions.py
+
+5. VIEW RESULTS
+   Dashboard shows leaderboard, completions, and insights!
+
+================================================================================
+TROUBLESHOOTING:
+================================================================================
+
+Q: No mission attempts showing?
+A: This is normal! Employees need to access the mission model first.
+   Share the mission URL with them.
+
+Q: How do I know if someone completed a mission?
+A: The system looks for success keywords in AI responses:
+   - "congratulations"
+   - "mission accomplished"
+   - "you did it"
+   - etc.
+
+Q: Can I track multiple missions?
+A: Yes! The system automatically detects all missions:
+   - Week 1, Challenge 1
+   - Week 1, Challenge 2
+   - Week 2, Challenge 1
+   - etc.
+
+Q: How often should I run analysis?
+A: Run it whenever you get a new export:
+   - Daily during active mission periods
+   - Weekly for regular monitoring
+   - After major announcements
+
+================================================================================
+FEATURES:
+================================================================================
+
+✓ **VIEW ALL CHATS** - Browse every conversation in the system!
+✓ Automatic mission detection
+✓ Filter by week, challenge, or user
+✓ Success rate calculations
+✓ Interactive tabbed dashboard (4 tabs!)
+✓ Search and filter any chat
+✓ Conversation previews
+✓ Model usage statistics
+✓ Leaderboard rankings
+✓ Export to CSV/JSON
+✓ No installation required (Python stdlib only)
+✓ Works on Windows, Mac, Linux
+
+================================================================================
+NEXT STEPS:
+================================================================================
+
+1. [ ] Announce Mission 1 to employees
+2. [ ] Share mission link
+3. [ ] Wait for participation
+4. [ ] Export updated data
+5. [ ] Run analysis
+6. [ ] Share dashboard with stakeholders
+
+================================================================================
+For full documentation, see: README.md
+For help: python analyze_missions.py --help
+================================================================================
+
