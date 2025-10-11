@@ -8,16 +8,25 @@ import re
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-import glob
+
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
 
 class MissionAnalyzer:
-    def __init__(self, json_file, user_names_file='user_names.json'):
-        self.json_file = json_file
-        self.user_names_file = user_names_file
-        self.data = []
+    def __init__(self, json_file=None, user_names_file=None, verbose=True, data=None, user_names=None):
+        """
+        Initialize analyzer; accepts either a path to an export file or an in-memory
+        chat list (useful when fetching data from external APIs).
+        """
+        if json_file is None and data is None:
+            raise ValueError("Either json_file or data must be provided to MissionAnalyzer")
+
+        self.json_file = Path(json_file) if json_file else None
+        self.user_names_file = Path(user_names_file) if user_names_file else DATA_DIR / 'user_names.json'
+        self.data = data or []
         self.mission_chats = []
         self.user_names = {}
+        self.verbose = verbose
         self.user_stats = defaultdict(lambda: {
             'user_id': '',
             'missions_attempted': [],
@@ -45,23 +54,40 @@ class MissionAnalyzer:
             'you succeeded', 'you win', 'you got it'
         ]
         
-        self.load_user_names()
-        self.load_data()
+        if user_names:
+            self.user_names.update(user_names)
+            self.load_user_names(merge=True)
+        else:
+            self.load_user_names()
+        if not self.data:
+            self.load_data()
     
-    def load_user_names(self):
+    def load_user_names(self, merge=False):
         """Load user names from mapping file"""
         try:
             with open(self.user_names_file, 'r', encoding='utf-8') as f:
-                self.user_names = json.load(f)
+                file_names = json.load(f)
             # Remove comment fields
-            self.user_names = {k: v for k, v in self.user_names.items() if not k.startswith('_')}
-            print(f"Loaded {len(self.user_names)} user name mappings")
+            file_names = {k: v for k, v in file_names.items() if not k.startswith('_')}
+            if merge:
+                original = len(self.user_names)
+                self.user_names.update(file_names)
+                if self.verbose:
+                    print(f"Merged {len(file_names)} user name mappings (from {original} existing)")
+            else:
+                self.user_names = file_names
+                if self.verbose:
+                    print(f"Loaded {len(self.user_names)} user name mappings")
         except FileNotFoundError:
-            print("No user_names.json found - showing user IDs")
-            self.user_names = {}
+            if self.verbose:
+                print(f"No user_names.json found at {self.user_names_file} - showing user IDs")
+            if not merge:
+                self.user_names = {}
         except json.JSONDecodeError:
-            print("Warning: Invalid user_names.json - using default names")
-            self.user_names = {}
+            if self.verbose:
+                print(f"Warning: Invalid user_names.json at {self.user_names_file} - using default names")
+            if not merge:
+                self.user_names = {}
     
     def get_user_name(self, user_id):
         """Get user name from ID, or show first part of UUID"""
@@ -72,15 +98,23 @@ class MissionAnalyzer:
     
     def load_data(self):
         """Load chat data from JSON file"""
+        if not self.json_file:
+            if self.verbose:
+                print("No JSON file provided; using data supplied directly.")
+            return
+
         try:
             with open(self.json_file, 'r', encoding='utf-8') as f:
                 self.data = json.load(f)
-            print(f"Loaded {len(self.data)} chats from {self.json_file}")
+            if self.verbose:
+                print(f"Loaded {len(self.data)} chats from {self.json_file}")
         except FileNotFoundError:
-            print(f"Error: File {self.json_file} not found")
+            if self.verbose:
+                print(f"Error: File {self.json_file} not found")
             self.data = []
         except json.JSONDecodeError:
-            print(f"Error: Invalid JSON in {self.json_file}")
+            if self.verbose:
+                print(f"Error: Invalid JSON in {self.json_file}")
             self.data = []
     
     def is_mission_model(self, model_name):
@@ -280,12 +314,14 @@ class MissionAnalyzer:
 
 def find_latest_export():
     """Find the most recent export file"""
-    json_files = glob.glob('all-chats-export-*.json')
+    if not DATA_DIR.exists():
+        return None
+
+    json_files = sorted(DATA_DIR.glob('all-chats-export-*.json'), reverse=True)
     if not json_files:
         return None
     # Sort by filename (timestamp in filename)
-    json_files.sort(reverse=True)
-    return json_files[0]
+    return str(json_files[0])
 
 
 if __name__ == '__main__':
@@ -293,7 +329,7 @@ if __name__ == '__main__':
     latest_file = find_latest_export()
     
     if not latest_file:
-        print("No export files found! Please add a chat export JSON file.")
+        print("No export files found! Please add a chat export JSON file to the data/ directory.")
         exit(1)
     
     print(f"Using: {latest_file}\n")
@@ -353,4 +389,3 @@ if __name__ == '__main__':
             print(f"  Unique Users: {mission_stats['unique_users']}")
     
     print("\n" + "="*80)
-

@@ -1,0 +1,13 @@
+# dependencies
+/node_modules
+
+# production
+/.next
+/out
+
+# misc
+/.turbo
+/.swc
+/.vercel
+*.log
+*.local
