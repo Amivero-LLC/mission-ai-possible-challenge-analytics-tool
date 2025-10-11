@@ -1,37 +1,63 @@
 # 🎯 Mission Challenge Analyzer
 
-Comprehensive analysis system for OpenWebUI mission challenges and employee engagement tracking.
+Comprehensive analysis system for OpenWebUI mission challenges and employee engagement tracking. The project now ships as a two-service stack: a FastAPI backend that exposes analytics data and a Next.js (TypeScript) frontend that renders the enhanced interactive dashboard.
 
-## 📋 Features
+## 🏗️ Repository Structure
 
-- ✅ **View ALL chats** - Browse every conversation in the system
-- ✅ **User-friendly names** - Shows "User 1", "User 2" or custom names you define
-- ✅ Automatic mission detection and tracking
-- ✅ Interactive tabbed dashboard with visualizations
-- ✅ Leaderboard generation (multiple sorting options)
-- ✅ Mission-specific filtering (by week, challenge, user)
-- ✅ **Search and filter chats** - Find specific conversations instantly
-- ✅ Success rate calculations
-- ✅ **Model usage statistics** - Track which models are most popular
-- ✅ **Conversation previews** - See message snippets without opening files
-- ✅ **Customizable user names** - Map UUIDs to real names via `data/user_names.json`
-- ✅ Export to JSON and CSV formats
-- ✅ Real-time participation tracking
+- `backend/` – FastAPI application (`uvicorn backend.app.main:app`)
+- `frontend/` – Next.js app for the mission dashboard UI
+- `mission_analyzer.py` and `/scripts` – Existing analytics utilities retained for CLI or batch workflows
+- `data/` – Chat export files + user name mappings consumed by the backend
 
 ## 🚀 Quick Start
 
-### Basic Usage
+### 1. Prepare data
+
+Place an OpenWebUI export in `data/` (e.g. `data/all-chats-export-*.json`). Optionally add a `data/user_names.json` mapping for friendly names.
+
+### 2. Start the stack
+
+#### Option A – Manual terminals
 
 ```bash
-# Analyze all missions (auto-detects latest export file)
-python analyze_missions.py
+# Terminal 1 – Backend
+python -m venv .venv
+source .venv/bin/activate  # or .venv\Scripts\activate on Windows
+pip install -r backend/requirements.txt
+uvicorn backend.app.main:app --reload
+
+# Terminal 2 – Frontend
+cd frontend
+npm install
+npm run dev
 ```
 
-This will:
-1. Find the most recent chat export file
-2. Analyze all mission attempts
-3. Generate an interactive HTML dashboard
-4. Open the dashboard in your browser
+Environment variables:
+
+- `MISSION_DATA_FILE` (optional) – absolute/relative path to a specific export
+- `MISSION_USER_NAMES_FILE` (optional) – override the default `data/user_names.json`
+- `OPEN_WEBUI_HOSTNAME` – (optional) base URL for live OpenWebUI instance (e.g. `https://amichat.prod.amivero-solutions.com`)
+- `OPEN_WEBUI_API_KEY` – (optional) bearer token used when fetching live chats from OpenWebUI
+
+When both `OPEN_WEBUI_HOSTNAME` and `OPEN_WEBUI_API_KEY` are set, the backend bypasses local exports and streams data directly from `${OPEN_WEBUI_HOSTNAME}/api/v1/chats/all/db` and `${OPEN_WEBUI_HOSTNAME}/api/v1/users/all` on each request, so the dashboard always reflects the latest conversations and user display names.
+
+Set `NEXT_PUBLIC_API_BASE_URL` (and `API_BASE_URL` for server-side fetches if the API is remote). Defaults to `http://localhost:8000`.
+
+Open `http://localhost:3000` to view the dashboard. The UI mirrors the legacy enhanced dashboard, including overview metrics, leaderboard, mission breakdown, all-chats view, and model stats with live filtering.
+
+#### Option B – Docker Compose (via Make)
+
+```bash
+make up
+```
+
+Hot reload is enabled for both services:
+- Backend runs `uvicorn` with `--reload` and mounts the repository so Python changes apply immediately.
+- Frontend runs `npm run dev` with the project mounted and `node_modules` persisted in a named volume.
+
+The compose file and `.env` bind the local `data/` directory into both containers at `/app/data` so new exports are immediately available to the API and UI. Update `.env` if you need to tweak ports or API URLs.
+
+---
 
 ### View Results
 

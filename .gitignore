@@ -13,6 +13,7 @@ venv/
 env/
 .env
 .env.*
+*.env.local
 
 #########################
 # IDE / editor settings
@@ -21,6 +22,8 @@ env/
 .idea/
 *.swp
 *.swo
+.DS_Store
+Thumbs.db
 
 ###################
 # Test & tooling
@@ -33,12 +36,6 @@ coverage.xml
 htmlcov/
 .pyre/
 
-###############
-# OS cruft
-###############
-.DS_Store
-Thumbs.db
-
 ##########################
 # Generated application data
 ##########################
@@ -47,3 +44,20 @@ public/*.html
 # Chat export snapshots and other large data dumps
 data/all-chats-export-*.json
 
+##########################
+# Node / frontend artifacts
+##########################
+frontend/node_modules/
+frontend/.next/
+frontend/.turbo/
+frontend/.swc/
+frontend/.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+##########################
+# Docker-managed volumes
+##########################
+frontend_node_modules/
