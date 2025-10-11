@@ -1,0 +1,169 @@
+================================================================================
+  USER NAMES CUSTOMIZATION GUIDE
+================================================================================
+
+The dashboard now shows friendly user names instead of long UUIDs!
+
+================================================================================
+HOW IT WORKS:
+================================================================================
+
+BY DEFAULT:
+  - Shows "User 1", "User 2", "User 3", etc.
+  - Automatically generated from your data
+  - No setup required!
+
+WITH CUSTOM NAMES:
+  - Edit data/user_names.json to add real names
+  - Maps user IDs to actual employee names
+  - Keeps UUIDs visible as subtitle
+
+================================================================================
+CURRENT USERS IN YOUR SYSTEM:
+================================================================================
+
+Your export has 12 unique users:
+
+  1. User 1  (115d1995-6d11-4fb8-934f-95fe4c58d37e) - 6 chats
+  2. User 2  (1ed7e7fb-665c-4815-87fa-9d7df3e962a4) - 1 chat
+  3. User 3  (26954c6d-10da-4041-9fcb-a88310a27f21) - 1 chat
+  4. User 4  (316fa812-0eef-4ef0-81dc-a26b8b119c02) - 1 chat
+  5. User 5  (3827a21d-a724-4b52-9db2-894010ae603f) - 1 chat
+  6. User 6  (498b0c4b-9346-4b66-bd81-149ebf086fa6) - 1 chat
+  7. User 7  (5558c27c-1057-4599-9bad-fa1ba4d40d1d) - 1 chat
+  8. User 8  (a6bdf0fa-cafc-4ed6-85a1-dd85bf0d9284) - 1 chat
+  9. User 9  (bbb02eb8-9894-442f-b964-7dae2fa749f5) - 1 chat
+  10. User 10 (bfa35d82-c824-449a-8a2a-d566893c2f4f) - 1 chat
+  11. User 11 (c09582a3-e5d9-4589-b262-0ac5f240352a) - 1 chat
+  12. User 12 (c9e9f44e-a7ac-46ae-bb5d-8427684c943d) - 4 chats
+
+================================================================================
+HOW TO ADD REAL NAMES:
+================================================================================
+
+STEP 1: Open data/user_names.json in a text editor
+
+STEP 2: Replace the default names with real names:
+
+   BEFORE:
+   "115d1995-6d11-4fb8-934f-95fe4c58d37e": "User 1"
+
+   AFTER:
+   "115d1995-6d11-4fb8-934f-95fe4c58d37e": "John Smith"
+
+STEP 3: Save the file
+
+STEP 4: Run the analyzer again:
+   python analyze_missions.py
+
+STEP 5: Dashboard now shows "John Smith" instead of "User 1"!
+
+================================================================================
+EXAMPLE data/user_names.json:
+================================================================================
+
+{
+  "_comment": "Optional: Map user IDs to real names",
+  
+  "115d1995-6d11-4fb8-934f-95fe4c58d37e": "John Smith",
+  "1ed7e7fb-665c-4815-87fa-9d7df3e962a4": "Jane Doe",
+  "26954c6d-10da-4041-9fcb-a88310a27f21": "Bob Johnson",
+  "c9e9f44e-a7ac-46ae-bb5d-8427684c943d": "Alice Williams"
+}
+
+================================================================================
+TIPS:
+================================================================================
+
+1. IDENTIFYING USERS:
+   - Look at chat titles to guess who it is
+   - Check which user has the most chats
+   - Ask your OpenWebUI admin for user mappings
+
+2. PARTIAL MAPPING:
+   - You don't need to map all users
+   - Unmapped users still show as "User X"
+   - Map only the users you care about
+
+3. KEEPING IT UPDATED:
+   - When new users join, add them to data/user_names.json
+   - The file won't overwrite itself
+   - You maintain the mappings manually
+
+4. PRIVACY:
+   - data/user_names.json is local to your machine
+   - Not included in exports
+   - Safe to use real names or keep generic
+
+================================================================================
+WHERE USER NAMES APPEAR:
+================================================================================
+
+User names now show in:
+  ✓ All Chats table (User column)
+  ✓ Leaderboard (User column)
+  ✓ Console output
+  ✓ CSV exports
+  ✓ JSON exports
+
+Format in dashboard:
+  John Smith
+  c9e9f44e-a7ac-46ae-bb5d-...
+  ^^^^^^^^^^  ^^^^^^^^^^^^^^^^
+  User Name   UUID (smaller, gray)
+
+================================================================================
+TROUBLESHOOTING:
+================================================================================
+
+Q: I edited data/user_names.json but names don't change
+A: Make sure:
+   - JSON syntax is correct (no trailing commas)
+   - You saved the file
+   - You ran python analyze_missions.py again
+
+Q: How do I find out who a user ID belongs to?
+A: Options:
+   - Ask your OpenWebUI administrator
+   - Check the chat titles for clues
+   - Export user data from OpenWebUI admin panel
+
+Q: Can I use special characters in names?
+A: Yes! But watch out for:
+   - Quotes inside names: Use \"John \"Johnny\" Smith\"
+   - Emojis work fine: "John Smith 🎯"
+
+Q: What if I delete data/user_names.json?
+A: No problem! The system will:
+   - Automatically use "User 1", "User 2", etc.
+   - Still work perfectly
+   - You can recreate it anytime
+
+================================================================================
+EXAMPLE USE CASE:
+================================================================================
+
+SCENARIO: You want to see who's most active
+
+1. Open dashboard
+2. Go to "All Chats" tab
+3. See "User 12" has 4 chats (most active)
+4. Look at their chat titles - lots of technical questions
+5. Edit data/user_names.json:
+   "c9e9f44e-a7ac-46ae-bb5d-8427684c943d": "Senior Developer"
+6. Run: python analyze_missions.py
+7. Now dashboard shows "Senior Developer" - much clearer!
+
+================================================================================
+READY TO CUSTOMIZE!
+================================================================================
+
+Your data/user_names.json file lives in the repository's data directory.
+Edit it to add real names, then run the analyzer again.
+
+Current mapping: 12 users with default names (User 1-12)
+
+To update: Edit data/user_names.json, save, and run:
+  python analyze_missions.py
+
+================================================================================

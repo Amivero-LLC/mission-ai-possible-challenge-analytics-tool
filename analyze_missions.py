@@ -5,7 +5,8 @@ Easy-to-use script with filters and options
 
 import sys
 import os
-from mission_analyzer import MissionAnalyzer, find_latest_export
+from pathlib import Path
+from mission_analyzer import MissionAnalyzer, find_latest_export, DATA_DIR
 from generate_enhanced_dashboard import generate_enhanced_dashboard
 
 
@@ -149,10 +150,17 @@ def main():
     # Find file
     if not json_file:
         json_file = find_latest_export()
+    else:
+        candidate = Path(json_file)
+        if not candidate.exists() and not candidate.is_absolute():
+            alt_candidate = DATA_DIR / candidate
+            if alt_candidate.exists():
+                candidate = alt_candidate
+        json_file = str(candidate)
     
     if not json_file or not os.path.exists(json_file):
         print("No export file found!")
-        print("\nPlease ensure you have a chat export JSON file in the current directory.")
+        print("\nPlease ensure you have a chat export JSON file in the data/ directory.")
         print("File should be named: all-chats-export-<timestamp>.json")
         return
     
@@ -266,7 +274,7 @@ def main():
         # Try to open in browser
         try:
             import webbrowser
-            webbrowser.open(dashboard_file)
+            webbrowser.open(Path(dashboard_file).resolve().as_uri())
             print("  (Opening in browser...)")
         except:
             pass
@@ -287,4 +295,3 @@ if __name__ == '__main__':
         print(f"\nError: {e}")
         import traceback
         traceback.print_exc()
-

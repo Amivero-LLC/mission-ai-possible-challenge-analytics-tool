@@ -4,15 +4,22 @@ Generate Interactive HTML Dashboard for Mission Analysis
 
 import json
 from datetime import datetime
+from pathlib import Path
 from mission_analyzer import MissionAnalyzer, find_latest_export
 
 
-def generate_html_dashboard(analyzer, output_file='mission_dashboard.html'):
+DEFAULT_DASHBOARD_PATH = Path('public') / 'mission_dashboard.html'
+
+
+def generate_html_dashboard(analyzer, output_file=None):
     """Generate a beautiful interactive HTML dashboard"""
     
     summary = analyzer.get_summary()
     leaderboard = analyzer.get_leaderboard(sort_by='completions')
     mission_breakdown = analyzer.get_mission_breakdown()
+    
+    output_path = Path(output_file) if output_file else DEFAULT_DASHBOARD_PATH
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     
     # Calculate additional stats
     participation_rate = (summary['unique_users'] / summary['total_chats'] * 100) if summary['total_chats'] > 0 else 0
@@ -447,11 +454,11 @@ def generate_html_dashboard(analyzer, output_file='mission_dashboard.html'):
 """
     
     # Write to file
-    with open(output_file, 'w', encoding='utf-8') as f:
+    with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html)
     
-    print(f"Dashboard generated: {output_file}")
-    return output_file
+    print(f"Dashboard generated: {output_path}")
+    return str(output_path)
 
 
 if __name__ == '__main__':
@@ -473,4 +480,3 @@ if __name__ == '__main__':
     
     print(f"\nDashboard ready: {dashboard_file}")
     print("Open it in your browser to view the results!")
-

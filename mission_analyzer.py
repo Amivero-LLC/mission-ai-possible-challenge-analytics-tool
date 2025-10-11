@@ -8,13 +8,14 @@ import re
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-import glob
+
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
 
 class MissionAnalyzer:
-    def __init__(self, json_file, user_names_file='user_names.json'):
-        self.json_file = json_file
-        self.user_names_file = user_names_file
+    def __init__(self, json_file, user_names_file=None):
+        self.json_file = Path(json_file)
+        self.user_names_file = Path(user_names_file) if user_names_file else DATA_DIR / 'user_names.json'
         self.data = []
         self.mission_chats = []
         self.user_names = {}
@@ -57,10 +58,10 @@ class MissionAnalyzer:
             self.user_names = {k: v for k, v in self.user_names.items() if not k.startswith('_')}
             print(f"Loaded {len(self.user_names)} user name mappings")
         except FileNotFoundError:
-            print("No user_names.json found - showing user IDs")
+            print(f"No user_names.json found at {self.user_names_file} - showing user IDs")
             self.user_names = {}
         except json.JSONDecodeError:
-            print("Warning: Invalid user_names.json - using default names")
+            print(f"Warning: Invalid user_names.json at {self.user_names_file} - using default names")
             self.user_names = {}
     
     def get_user_name(self, user_id):
@@ -280,12 +281,14 @@ class MissionAnalyzer:
 
 def find_latest_export():
     """Find the most recent export file"""
-    json_files = glob.glob('all-chats-export-*.json')
+    if not DATA_DIR.exists():
+        return None
+
+    json_files = sorted(DATA_DIR.glob('all-chats-export-*.json'), reverse=True)
     if not json_files:
         return None
     # Sort by filename (timestamp in filename)
-    json_files.sort(reverse=True)
-    return json_files[0]
+    return str(json_files[0])
 
 
 if __name__ == '__main__':
@@ -293,7 +296,7 @@ if __name__ == '__main__':
     latest_file = find_latest_export()
     
     if not latest_file:
-        print("No export files found! Please add a chat export JSON file.")
+        print("No export files found! Please add a chat export JSON file to the data/ directory.")
         exit(1)
     
     print(f"Using: {latest_file}\n")
@@ -353,4 +356,3 @@ if __name__ == '__main__':
             print(f"  Unique Users: {mission_stats['unique_users']}")
     
     print("\n" + "="*80)
-

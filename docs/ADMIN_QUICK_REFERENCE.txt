@@ -1,0 +1,149 @@
+================================================================================
+                    MISSION ANALYSIS - ADMIN QUICK REFERENCE
+================================================================================
+
+HOW TO RUN ANALYSIS (3 EASY STEPS):
+================================================================================
+
+STEP 1: EXPORT CHATS FROM OPENWEBUI
+   1. Go to OpenWebUI Admin Panel
+   2. Click "Export All Chats"
+   3. Save file (keeps timestamp in name automatically)
+
+STEP 2: RUN ANALYSIS
+   Option A: Double-click "scripts/RUN_ANALYSIS.bat" (Easiest!)
+   Option B: Run command: python analyze_missions.py
+
+STEP 3: VIEW DASHBOARD
+   - Dashboard opens automatically in browser
+   - Or manually open: public/mission_dashboard.html
+
+================================================================================
+DASHBOARD TABS:
+================================================================================
+
+📊 OVERVIEW
+   - Total statistics
+   - Success rates
+   - Top performers leaderboard
+
+💬 ALL CHATS
+   - Browse all conversations
+   - Search by user/title/model
+   - Filter: Mission/Regular/Completed
+   - Click "View" to see details
+
+🎯 MISSIONS
+   - Mission breakdown by week/challenge
+   - Completion statistics
+   - Winning conversation previews
+
+🤖 MODELS
+   - Model usage statistics
+   - Mission vs regular chat breakdown
+
+================================================================================
+USEFUL COMMANDS:
+================================================================================
+
+Basic Analysis:
+   python analyze_missions.py
+
+Export to Excel/CSV:
+   python analyze_missions.py --export-csv
+
+Export to JSON:
+   python analyze_missions.py --export-json
+
+Filter by Week:
+   python analyze_missions.py --week 1
+
+Filter by Challenge:
+   python analyze_missions.py --challenge 1
+
+Get Help:
+   python analyze_missions.py --help
+
+================================================================================
+TROUBLESHOOTING:
+================================================================================
+
+Problem: Python not found
+Solution: Install Python from python.org
+         ✅ Check "Add Python to PATH" during install
+
+Problem: Dashboard doesn't open
+Solution: Manually open public/mission_dashboard.html in browser
+
+Problem: Old data showing
+Solution: Make sure latest export file is in folder
+         File should have newest timestamp
+
+Problem: Permission denied
+Solution: Check folder permissions (need Read/Write)
+
+================================================================================
+FILE LOCATIONS:
+================================================================================
+
+SHARED FOLDER (if using shared setup):
+   \\YourServer\MissionAnalysis\
+   or
+   OneDrive: ...\Mission Analysis\
+
+KEY FILES:
+   scripts/RUN_ANALYSIS.bat          - Double-click to run
+   public/mission_dashboard.html    - Open to view results
+   all-chats-export-*.json   - Your exported data
+   
+DOCUMENTATION:
+   README.md                 - Full documentation
+   docs/QUICKSTART.txt           - Quick start guide
+   docs/ADMIN_DEPLOYMENT_GUIDE.md - This deployment info
+
+================================================================================
+ADMIN WORKFLOW (WEEKLY):
+================================================================================
+
+1. Export chats from OpenWebUI (Monday morning)
+2. Run analysis (scripts/RUN_ANALYSIS.bat)
+3. Review dashboard (check mission completions)
+4. Export CSV if needed (for reports)
+5. Share dashboard with stakeholders
+6. Archive old exports (monthly cleanup)
+
+================================================================================
+TIPS FOR SUCCESS:
+================================================================================
+
+✓ Name exports clearly (timestamp is automatic)
+✓ Archive old exports monthly
+✓ Export CSV for presentations
+✓ Check "All Chats" tab to see all activity
+✓ Use filters to focus on specific data
+✓ Share dashboard HTML file directly (it's standalone)
+
+================================================================================
+CONTACT & SUPPORT:
+================================================================================
+
+For technical issues:
+   - Check README.md first
+   - Review docs/ADMIN_DEPLOYMENT_GUIDE.md
+   - Contact IT support
+
+For mission questions:
+   - Check mission SharePoint site
+   - Review mission documentation
+
+================================================================================
+QUICK CHEAT SHEET:
+================================================================================
+
+Export → Run scripts/RUN_ANALYSIS.bat → View Dashboard → Export CSV (if needed)
+
+That's it! 🎉
+
+================================================================================
+                           Last Updated: October 2025
+================================================================================

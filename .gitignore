@@ -1,0 +1,49 @@
+########################
+# Python build artifacts
+########################
+__pycache__/
+*.py[cod]
+*$py.class
+
+###############
+# Environments
+###############
+.venv/
+venv/
+env/
+.env
+.env.*
+
+#########################
+# IDE / editor settings
+#########################
+.vscode/
+.idea/
+*.swp
+*.swo
+
+###################
+# Test & tooling
+###################
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.pyre/
+
+###############
+# OS cruft
+###############
+.DS_Store
+Thumbs.db
+
+##########################
+# Generated application data
+##########################
+public/*.html
+
+# Chat export snapshots and other large data dumps
+data/all-chats-export-*.json
+

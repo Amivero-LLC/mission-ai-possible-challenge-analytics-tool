@@ -7,6 +7,9 @@ import requests
 import json
 from datetime import datetime
 import os
+from pathlib import Path
+
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
 class OpenWebUIFetcher:
     def __init__(self, base_url, api_key):
@@ -65,15 +68,21 @@ class OpenWebUIFetcher:
     
     def save_export(self, chats, filename=None):
         """Save chats to JSON file in same format as manual export"""
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+
         if filename is None:
             timestamp = int(datetime.now().timestamp() * 1000)
             filename = f'all-chats-export-{timestamp}.json'
         
-        with open(filename, 'w', encoding='utf-8') as f:
+        export_path = Path(filename)
+        if not export_path.is_absolute():
+            export_path = DATA_DIR / export_path
+
+        with open(export_path, 'w', encoding='utf-8') as f:
             json.dump(chats, f, indent=2, ensure_ascii=False)
         
-        print(f"✓ Saved to: {filename}")
-        return filename
+        print(f"✓ Saved to: {export_path}")
+        return str(export_path)
     
     def create_user_mapping(self, users):
         """Create user_names.json from user data"""
@@ -96,10 +105,13 @@ class OpenWebUIFetcher:
             if user_id:
                 user_mapping[user_id] = display_name
         
-        with open('user_names.json', 'w', encoding='utf-8') as f:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        user_mapping_path = DATA_DIR / 'user_names.json'
+
+        with open(user_mapping_path, 'w', encoding='utf-8') as f:
             json.dump(user_mapping, f, indent=2, ensure_ascii=False)
         
-        print(f"✓ Created user_names.json with {len(user_mapping)-2} users")
+        print(f"✓ Created {user_mapping_path.name} with {len(user_mapping)-2} users at {user_mapping_path}")
 
 
 def main():
@@ -162,4 +174,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

@@ -6,6 +6,9 @@ import requests
 import json
 from datetime import datetime
 import os
+from pathlib import Path
+
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
 # DEV ENVIRONMENT CONFIGURATION
 OPENWEBUI_URL = "https://amichat.dev.amivero-solutions.com"
@@ -28,7 +31,7 @@ def fetch_chats_from_dev():
         print("\nOr export manually:")
         print("  1. Go to https://amichat.dev.amivero-solutions.com")
         print("  2. Admin Panel → Export Chats")
-        print("  3. Save to this folder")
+        print("  3. Save to the data/ folder in this project")
         print("  4. Run: python analyze_missions.py")
         print("="*80)
         return
@@ -73,9 +76,12 @@ def fetch_chats_from_dev():
                 if user_id:
                     user_mapping[user_id] = display
             
-            with open('user_names.json', 'w', encoding='utf-8') as f:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            user_names_path = DATA_DIR / 'user_names.json'
+
+            with open(user_names_path, 'w', encoding='utf-8') as f:
                 json.dump(user_mapping, f, indent=2, ensure_ascii=False)
-            print(f"✓ Created user_names.json with {len(user_mapping)} users")
+            print(f"✓ Created {user_names_path.name} with {len(user_mapping)} users at {user_names_path}")
             
         except Exception as e:
             print(f"! Could not fetch users: {e}")
@@ -84,11 +90,14 @@ def fetch_chats_from_dev():
         # Save export
         timestamp = int(datetime.now().timestamp() * 1000)
         filename = f'all-chats-export-DEV-{timestamp}.json'
-        
-        with open(filename, 'w', encoding='utf-8') as f:
+
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        export_path = DATA_DIR / filename
+
+        with open(export_path, 'w', encoding='utf-8') as f:
             json.dump(chats, f, indent=2, ensure_ascii=False)
         
-        print(f"✓ Saved to: {filename}")
+        print(f"✓ Saved to: {export_path}")
         print()
         print("="*80)
         print("FETCH COMPLETE - Running analysis...")
@@ -120,4 +129,3 @@ if __name__ == '__main__':
         import requests
     
     fetch_chats_from_dev()
-

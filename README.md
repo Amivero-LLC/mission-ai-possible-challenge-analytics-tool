@@ -14,7 +14,7 @@ Comprehensive analysis system for OpenWebUI mission challenges and employee enga
 - ✅ Success rate calculations
 - ✅ **Model usage statistics** - Track which models are most popular
 - ✅ **Conversation previews** - See message snippets without opening files
-- ✅ **Customizable user names** - Map UUIDs to real names via `user_names.json`
+- ✅ **Customizable user names** - Map UUIDs to real names via `data/user_names.json`
 - ✅ Export to JSON and CSV formats
 - ✅ Real-time participation tracking
 
@@ -36,7 +36,7 @@ This will:
 ### View Results
 
 The system generates:
-- **`mission_dashboard.html`** - Interactive web dashboard (opens automatically)
+- **`public/mission_dashboard.html`** - Interactive web dashboard (opens automatically)
 - Console output with summary and leaderboards
 
 ## 🔍 Advanced Usage
@@ -57,7 +57,7 @@ python analyze_missions.py --week 1 --challenge 1
 python analyze_missions.py --user abc123-def456-...
 
 # Use specific export file
-python analyze_missions.py --file all-chats-export-1234567890.json
+python analyze_missions.py --file data/all-chats-export-1234567890.json
 ```
 
 ### Export Options
@@ -86,7 +86,7 @@ python analyze_missions.py --help
 
 The system needs an OpenWebUI chat export file:
 - **Format:** `all-chats-export-<timestamp>.json`
-- **Location:** Same directory as the scripts
+- **Location:** `data/` directory in this repository
 - **Source:** Exported from OpenWebUI Admin Panel
 
 ### Optional: User Names Mapping
@@ -94,7 +94,7 @@ The system needs an OpenWebUI chat export file:
 The system auto-generates friendly names (User 1, User 2, etc.) for all participants.
 
 **To use custom names:**
-1. Edit `user_names.json` in the directory
+1. Edit `data/user_names.json`
 2. Replace `"User 1"` with actual names like `"John Smith"`
 3. Run the analyzer again
 4. Dashboard now shows real names!
@@ -177,7 +177,7 @@ Leaderboard in spreadsheet format with:
 ### Regular Monitoring
 
 1. **Export chats** from OpenWebUI (Admin Panel)
-2. **Save file** to this directory as `all-chats-export-<timestamp>.json`
+2. **Save file** into the `data/` directory as `all-chats-export-<timestamp>.json`
 3. **Run analysis:**
    ```bash
    python analyze_missions.py
@@ -200,9 +200,26 @@ python analyze_missions.py --week 2 --export-csv
 - **`analyze_missions.py`** - Main entry point (run this!)
 - **`mission_analyzer.py`** - Core analysis engine
 - **`generate_dashboard.py`** - Dashboard generator
-- **`mission_dashboard.html`** - Generated dashboard (auto-updated)
+- **`public/mission_dashboard.html`** - Generated dashboard (auto-updated)
 - **`mission_results.json`** - Exported data (optional)
 - **`mission_results.csv`** - Exported leaderboard (optional)
+
+## 📚 Documentation
+
+All supporting guides live in the `docs/` directory. Start with the guides that match your role:
+
+- `docs/ADMIN_DEPLOYMENT_GUIDE.md` – Full deployment playbook with setup options, permissions, and maintenance tips.
+- `docs/ADMIN_QUICK_REFERENCE.txt` – One-page cheat sheet admins can pin for daily operations.
+- `docs/DEPLOYMENT_SUMMARY.md` – High-level summary of deliverables, deployment checklist, and success metrics.
+- `docs/QUICKSTART.txt` – Three-step walkthrough for running the analyzer manually.
+- `docs/API_SETUP_GUIDE.md` – Instructions for enabling API-based chat fetching and automation.
+- `docs/QUICK_START_API.txt` – Fast reference for the API workflow once it is configured.
+- `docs/DEPLOY_MISSION_2.md` – Mission 2 rollout plan, including prompts, success criteria, and communications.
+- `docs/MISSION_2_CIPHER_BREAKER.md` – Detailed mission brief that complements the deployment guide.
+- `docs/mission-2-system-prompt.txt` – Ready-to-paste system prompt used for Mission 2.
+- `docs/USER_NAMES_GUIDE.txt` – Optional mapping guide for replacing user IDs with friendly names.
+- `docs/WHATS_NEW.txt` – Change log of recent updates to the analytics tool.
+- `docs/chat_summary.txt` / `docs/complete_conversation_log.txt` – Example output artifacts for demos or troubleshooting.
 
 ## 🎨 Dashboard Features
 
@@ -220,7 +237,7 @@ The HTML dashboard includes:
 ```
 ✗ No export file found!
 ```
-**Solution:** Export chats from OpenWebUI and save to this directory
+**Solution:** Export chats from OpenWebUI and save to the `data/` directory
 
 ### No mission attempts yet
 ```
@@ -288,9 +305,9 @@ Unique Participants: 4
     Completions: 1 | Attempts: 2 | Success Rate: 50.0% | Messages: 12
 
 🎨 Generating HTML dashboard...
-✓ Dashboard generated: mission_dashboard.html
+✓ Dashboard generated: public/mission_dashboard.html
 
-✓ Dashboard ready: mission_dashboard.html
+✓ Dashboard ready: public/mission_dashboard.html
   Open it in your browser to view interactive results!
   (Opening in browser...)
 
@@ -302,4 +319,3 @@ Unique Participants: 4
 ---
 
 **Ready to track your missions!** 🚀
-
