@@ -1,6 +1,14 @@
 @echo off
 REM Mission Analysis Dashboard - Quick Run Script
-REM Double-click this file to run the analysis and open the dashboard
+REM Purpose:
+REM   Launches the legacy CLI analyzer against the latest export in data/.
+REM Usage:
+REM   Double-click in Explorer or run from cmd/powershell.
+REM Dependencies:
+REM   - Python in PATH
+REM   - data/all-chats-export-*.json present
+REM Side Effects:
+REM   - Generates/refreshes public/mission_dashboard.html
 
 echo ================================================================================
 echo   MISSION ANALYSIS DASHBOARD
@@ -30,4 +38,3 @@ echo Analysis complete! Dashboard should open in your browser.
 echo ================================================================================
 echo.
 pause
-

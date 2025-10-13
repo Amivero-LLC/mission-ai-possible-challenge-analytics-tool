@@ -1,6 +1,10 @@
 """
-Mission Analysis System for OpenWebUI Challenge Tracking
-Analyzes employee mission attempts, completions, and generates leaderboards
+Mission Analysis System for OpenWebUI challenge tracking.
+
+This module parses OpenWebUI chat exports (or live API payloads) to identify AI
+mission participation, completions, and other telemetry used by the analytics
+dashboard. The goal is to provide a reusable, testable service layer that can
+feed both CLI tools and the FastAPI backend.
 """
 
 import json
@@ -14,10 +18,46 @@ DATA_DIR = PROJECT_ROOT / "data"
 
 
 class MissionAnalyzer:
+    """
+    Core analytics engine used by the API and legacy CLI tools.
+
+    The analyzer inspects chat transcripts, determines which conversations are
+    mission-related, derives per-user statistics, and produces leaderboards and
+    mission-specific breakdowns. It supports both on-disk JSON exports and
+    in-memory payloads retrieved from the OpenWebUI REST API.
+
+    Example:
+        >>> analyzer = MissionAnalyzer(json_file="data/all-chats-export-20240101.json")
+        >>> analyzer.analyze_missions(filter_week=1)
+        12
+        >>> summary = analyzer.get_summary()
+        >>> summary["success_rate"]
+        58.3
+    """
+
     def __init__(self, json_file=None, user_names_file=None, verbose=True, data=None, user_names=None):
         """
-        Initialize analyzer; accepts either a path to an export file or an in-memory
-        chat list (useful when fetching data from external APIs).
+        Initialize the analyzer with either a file path or an in-memory dataset.
+
+        Args:
+            json_file (str | pathlib.Path | None): Path to an OpenWebUI chat export.
+                Required if ``data`` is not supplied. Supports relative paths.
+            user_names_file (str | pathlib.Path | None): Optional mapping of
+                ``user_id -> friendly_name``. Defaults to ``data/user_names.json``.
+            verbose (bool): When True, prints informational messages about file
+                loading and user-name merging. Useful for CLI usage.
+            data (list[dict] | None): Preloaded chat objects (same structure as
+                the export JSON). Supply this when streaming from OpenWebUI APIs.
+            user_names (dict[str, str] | None): Additional name overrides, such
+                as a dictionary returned from ``/api/v1/users/all``.
+
+        Raises:
+            ValueError: If both ``json_file`` and ``data`` are omitted, the class
+                cannot operate because it has no chats to inspect.
+
+        Side Effects:
+            Loads chat data and user-name mappings eagerly so the instance is
+            ready for analysis immediately after construction.
         """
         if json_file is None and data is None:
             raise ValueError("Either json_file or data must be provided to MissionAnalyzer")
@@ -28,6 +68,7 @@ class MissionAnalyzer:
         self.mission_chats = []
         self.user_names = {}
         self.verbose = verbose
+        # Tracks per-user aggregates used to build leaderboard and summaries.
         self.user_stats = defaultdict(
             lambda: {
                 "user_id": "",
@@ -78,7 +119,26 @@ class MissionAnalyzer:
             self.load_data()
 
     def load_user_names(self, merge=False):
-        """Load user names from mapping file"""
+        """
+        Populate ``self.user_names`` from the configured JSON mapping.
+
+        Args:
+            merge (bool): When True, incoming mappings are merged with the
+                existing dictionary rather than replacing it. Use this when
+                combining local mapping files with remote OpenWebUI user data.
+
+        Returns:
+            None. ``self.user_names`` is updated in place.
+
+        Error Handling:
+            - Missing files log a warning (when ``verbose`` is True) and leave
+              ``self.user_names`` empty so the UI can fall back to UUIDs.
+            - Invalid JSON triggers a warning and resets the mapping to {}.
+
+        Side Effects:
+            Reads from disk (``user_names_file``) and prints to stdout when
+            ``verbose`` is enabled.
+        """
         try:
             with open(self.user_names_file, "r", encoding="utf-8") as f:
                 file_names = json.load(f)
@@ -105,14 +165,39 @@ class MissionAnalyzer:
                 self.user_names = {}
 
     def get_user_name(self, user_id):
-        """Get user name from ID, or show first part of UUID"""
+        """
+        Retrieve a display-friendly name for a user.
+
+        Args:
+            user_id (str): Raw identifier found in the chat export or API payload.
+
+        Returns:
+            str: Friendly name pulled from ``self.user_names`` if available,
+            otherwise a shortened UUID (first 13 characters) to aid recognition.
+
+        Usage:
+            ``analyzer.get_user_name(chat["user_id"])`` inside aggregation loops.
+        """
         if user_id in self.user_names:
             return self.user_names[user_id]
         # Show first 13 characters of UUID for better identification
         return user_id[:13] if len(user_id) > 13 else user_id
 
     def load_data(self):
-        """Load chat data from JSON file"""
+        """
+        Read chat transcripts from the configured JSON export.
+
+        Returns:
+            None. Populates ``self.data`` with the parsed list of chat records.
+
+        Error Handling:
+            - Missing files log an error (when ``verbose`` is True) and set
+              ``self.data`` to an empty list so downstream loops are safe.
+            - Malformed JSON triggers a similar warning and resets to [].
+
+        Notes:
+            ``self.json_file`` must be set; otherwise the method exits early.
+        """
         if not self.json_file:
             if self.verbose:
                 print("No JSON file provided; using data supplied directly.")
@@ -133,7 +218,22 @@ class MissionAnalyzer:
             self.data = []
 
     def is_mission_model(self, model_name):
-        """Check if model name matches mission patterns"""
+        """
+        Determine whether a model string represents a mission challenge.
+
+        Args:
+            model_name (str): Model identifier taken from chat metadata.
+
+        Returns:
+            bool: True when the model matches any of the regex patterns defined
+            in ``self.mission_patterns`` (case-insensitive).
+
+        Business Rules:
+            Mission models are identified heuristically via substring/regex
+            matches on tokens like ``maip``, ``mission``, ``week``, and
+            ``challenge``. These rules encapsulate naming conventions used by
+            the challenge program.
+        """
         model_lower = str(model_name).lower()
         for pattern in self.mission_patterns:
             if re.search(pattern, model_lower):
@@ -141,7 +241,22 @@ class MissionAnalyzer:
         return False
 
     def extract_mission_info(self, model_name):
-        """Extract mission details from model name"""
+        """
+        Parse mission metadata (week/challenge identifiers) from a model string.
+
+        Args:
+            model_name (str): Original model descriptor as stored in a chat
+                transcript or message.
+
+        Returns:
+            dict: Structure with the canonical ``mission_id`` plus numeric
+            ``week`` and ``challenge`` fields when they can be derived. Missing
+            values are represented as ``None``.
+
+        Notes:
+            Regular expressions are intentionally tolerant to account for
+            hyphen/underscore variations (e.g., ``week-1`` or ``week_1``).
+        """
         model_str = str(model_name).lower()
 
         # Try to extract week number
@@ -160,7 +275,22 @@ class MissionAnalyzer:
         }
 
     def check_success(self, messages):
-        """Check if mission was completed successfully"""
+        """
+        Assess whether a mission chat ended in success.
+
+        Args:
+            messages (list[dict]): Sequence of chat messages. Each entry is
+                expected to include ``role`` (assistant/user) and ``content``.
+
+        Returns:
+            bool: True if any assistant message includes a success keyword,
+            signalling that the mission was marked complete.
+
+        Business Rules:
+            The keyword list encodes domain-specific phrases like
+            ``"mission accomplished"`` and ``"you did it"`` that appear in AI
+            confirmations when a challenge is solved.
+        """
         for msg in messages:
             if msg.get("role") == "assistant":
                 content = msg.get("content", "").lower()
@@ -170,12 +300,33 @@ class MissionAnalyzer:
 
     def analyze_missions(self, filter_week=None, filter_challenge=None, filter_user=None):
         """
-        Analyze mission attempts with optional filters
+        Inspect chats and populate mission-related aggregates.
 
         Args:
-            filter_week: Only analyze missions from specific week (e.g., 1, 2)
-            filter_challenge: Only analyze specific challenge number (e.g., 1, 2)
-            filter_user: Only analyze attempts from specific user ID
+            filter_week (int | None): Restrict analysis to missions tagged with
+                the given week number. ``None`` keeps all weeks.
+            filter_challenge (int | None): Restrict analysis to a specific
+                challenge number. ``None`` keeps all challenges.
+            filter_user (str | None): Restrict analysis to chats by the given
+                ``user_id``. Useful for per-participant reports.
+
+        Returns:
+            int: Count of mission-attempt chats that satisfied the filters.
+
+        Side Effects:
+            - Resets and repopulates ``self.mission_chats`` with structured
+              mission metadata per chat.
+            - Mutates ``self.user_stats`` so subsequent calls to
+              ``get_leaderboard`` and ``get_summary`` use fresh aggregates.
+
+        Example:
+            >>> analyzer.analyze_missions(filter_week=2, filter_challenge=1)
+            4
+
+        Notes:
+            The method attempts to detect mission participation from both the
+            chat-level ``models`` array and per-message ``model`` fields to
+            handle exports where model attribution differs.
         """
         self.mission_chats = []
 
@@ -248,14 +399,30 @@ class MissionAnalyzer:
 
     def get_leaderboard(self, sort_by="completions"):
         """
-        Get leaderboard sorted by various criteria
+        Produce a mission leaderboard with selectable ordering.
 
         Args:
-            sort_by: 'completions', 'attempts', 'efficiency' (completions/attempts)
+            sort_by (str): One of ``"completions"``, ``"attempts"``, or
+                ``"efficiency"``. Defaults to completions.
+
+        Returns:
+            list[dict]: Each entry contains mission attempt/completion counts,
+            efficiency percentage, and message totals for a user.
+
+        Business Rules:
+            - Efficiency represents ``completions / attempts * 100``.
+            - Sorting prioritizes the requested metric and falls back to
+              secondary keys (e.g., completions also considers attempts to break ties).
+
+        Example:
+            >>> leaderboard = analyzer.get_leaderboard(sort_by="efficiency")
+            >>> leaderboard[0]["user_id"]
+            'user-123'
         """
         leaderboard = []
 
         for user_id, stats in self.user_stats.items():
+            # Calculated percentages drive the efficiency leaderboard view.
             efficiency = (
                 stats["total_completions"] / stats["total_attempts"] * 100 if stats["total_attempts"] > 0 else 0
             )
@@ -283,7 +450,17 @@ class MissionAnalyzer:
         return leaderboard
 
     def get_summary(self):
-        """Get overall summary statistics"""
+        """
+        Summarize high-level mission statistics for dashboards.
+
+        Returns:
+            dict: Aggregate metrics such as ``total_chats``, ``mission_attempts``,
+            ``mission_completions``, ``success_rate``, and unique counts.
+
+        Notes:
+            Success rate is calculated as ``completions / attempts * 100`` and
+            guarded against division by zero.
+        """
         total_attempts = len(self.mission_chats)
         total_completions = sum(1 for chat in self.mission_chats if chat["completed"])
         unique_users = len(self.user_stats)
@@ -306,7 +483,17 @@ class MissionAnalyzer:
         }
 
     def get_mission_breakdown(self):
-        """Get breakdown by mission type"""
+        """
+        Return mission-level attempt and completion counts.
+
+        Returns:
+            list[dict]: Sorted in descending order by attempts. Each dictionary
+            contains ``mission``, ``attempts``, ``completions``, ``success_rate``,
+            and ``unique_users`` metrics.
+
+        Usage:
+            Feed directly into dashboard tables or CSV exports.
+        """
         breakdown = defaultdict(lambda: {"attempts": 0, "completions": 0, "users": set()})
 
         for chat in self.mission_chats:
@@ -334,7 +521,16 @@ class MissionAnalyzer:
 
 
 def find_latest_export():
-    """Find the most recent export file"""
+    """
+    Locate the newest OpenWebUI export in the ``data/`` directory.
+
+    Returns:
+        str | None: Path to the most recent export file (by filename ordering),
+        or ``None`` if the directory is missing or empty.
+
+    Dependencies:
+        Relies on consistent naming (`all-chats-export-<timestamp>.json`).
+    """
     if not DATA_DIR.exists():
         return None
 

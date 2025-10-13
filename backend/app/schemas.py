@@ -6,6 +6,8 @@ from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field
 
+# Pydantic models capture the shape of the dashboard API response payloads.
+
 
 class SortOption(str, Enum):
     completions = "completions"

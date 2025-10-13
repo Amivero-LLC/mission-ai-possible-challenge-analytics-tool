@@ -1,6 +1,13 @@
 @echo off
 REM Mission Analysis Dashboard - Fetch from API and Analyze
-REM This version automatically fetches data from OpenWebUI API
+REM Purpose:
+REM   Pulls live chats/users via OpenWebUI APIs and regenerates the dashboard.
+REM Usage:
+REM   Requires OPEN_WEBUI_HOSTNAME and OPEN_WEBUI_API_KEY environment variables.
+REM Dependencies:
+REM   - Python in PATH with requests module available (auto-installs if missing).
+REM Side Effects:
+REM   - Updates local JSON exports and dashboard artifacts.
 
 echo ================================================================================
 echo   MISSION ANALYSIS DASHBOARD (API MODE)
@@ -39,4 +46,3 @@ echo Complete! Dashboard should open in your browser.
 echo ================================================================================
 echo.
 pause
-

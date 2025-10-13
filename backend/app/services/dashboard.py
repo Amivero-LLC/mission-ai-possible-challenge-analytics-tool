@@ -54,6 +54,7 @@ def _fetch_remote_chats() -> Optional[List[dict]]:
 
 
 def _fetch_remote_users() -> Optional[Dict[str, str]]:
+    # Mirrors chat fetch logic but normalizes user metadata for display names.
     hostname = os.getenv("OPEN_WEBUI_HOSTNAME") or os.getenv("OPEN_WEB_UI_HOSTNAME")
     api_key = os.getenv("OPEN_WEBUI_API_KEY")
 
@@ -94,6 +95,7 @@ def _fetch_remote_users() -> Optional[Dict[str, str]]:
 
 
 def _pick_data_file(explicit_file: Optional[str]) -> str:
+    # Fallback to auto-discovered export when caller does not supply a path.
     if explicit_file:
         return explicit_file
     latest = find_latest_export()
@@ -170,6 +172,7 @@ def _build_model_stats(chats: List[ChatPreview]) -> List[ModelStatsEntry]:
 def _decorate_leaderboard(
     analyzer: MissionAnalyzer, raw_leaderboard: List[dict]
 ) -> List[LeaderboardEntry]:
+    # Enrich raw metrics with display-friendly user names.
     entries: List[LeaderboardEntry] = []
     for item in raw_leaderboard:
         user_id = item["user_id"]
@@ -233,6 +236,7 @@ def build_dashboard_response(
 
     remote_chats = _fetch_remote_chats()
     if remote_chats is not None:
+        # Prefer live data when OpenWebUI is reachable; fall back to static exports otherwise.
         remote_users = _fetch_remote_users() or {}
         analyzer = MissionAnalyzer(
             json_file=None,
@@ -255,6 +259,7 @@ def build_dashboard_response(
         filter_user=filter_user,
     )
 
+    # Compose the response sections in the order expected by the frontend.
     summary = _decorate_summary(analyzer, analyzer.get_summary())
     leaderboard = _decorate_leaderboard(analyzer, analyzer.get_leaderboard(sort_by=sort_by.value))
     missions = _decorate_mission_breakdown(analyzer.get_mission_breakdown())

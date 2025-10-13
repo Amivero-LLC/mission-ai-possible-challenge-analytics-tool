@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Query
 from .schemas import DashboardResponse, SortOption
 from .services.dashboard import build_dashboard_response
 
+# FastAPI instance serves data to the analytics frontend.
 app = FastAPI(title="Mission Dashboard API", version="1.0.0")
 
 
@@ -24,6 +25,7 @@ def get_dashboard(
     data_file: Optional[str] = Query(default=None),
     user_names_file: Optional[str] = Query(default=None),
 ) -> DashboardResponse:
+    # Delegate heavy lifting to the dashboard service while keeping HTTP layer thin.
     try:
         return build_dashboard_response(
             data_file=data_file,
