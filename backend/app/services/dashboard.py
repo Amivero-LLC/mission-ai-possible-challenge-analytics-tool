@@ -15,7 +15,7 @@ PROJECT_ROOT = CURRENT_FILE.parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from mission_analyzer import DATA_DIR, MissionAnalyzer, find_latest_export  # noqa: E402
+from .mission_analyzer import DATA_DIR, MissionAnalyzer, find_latest_export  # noqa: E402
 
 from ..schemas import (
     ChatMessage,
