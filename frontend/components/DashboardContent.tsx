@@ -13,6 +13,9 @@ type FilterState = {
   user: string;
 };
 
+/**
+ * UI tabs rendered by the dashboard. Keys align with conditional sections below.
+ */
 const tabs: Array<{ id: TabKey; label: string }> = [
   { id: "overview", label: "📊 Overview" },
   { id: "allchats", label: "💬 All Chats" },
@@ -31,10 +34,30 @@ interface Props {
   initialData: DashboardResponse;
 }
 
+/**
+ * Human-friendly number formatter that keeps locale-specific separators (e.g., 1,234).
+ *
+ * Args:
+ *   value (number): Metric to render.
+ *
+ * Returns:
+ *   string – Formatted number that matches browser locale defaults.
+ */
 function formatNumber(value: number) {
   return value.toLocaleString();
 }
 
+/**
+ * Render percentages with a configurable precision.
+ *
+ * Args:
+ *   value (number): Value expected between 0–100, but no guard is enforced so callers
+ *     can intentionally display >100% when required.
+ *   fractionDigits (number): Number of digits after the decimal point (default 1).
+ *
+ * Returns:
+ *   string in the format "12.3%".
+ */
 function formatPercent(value: number, fractionDigits = 1) {
   return `${value.toFixed(fractionDigits)}%`;
 }
@@ -51,6 +74,16 @@ const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   timeZone: "UTC",
 });
 
+/**
+ * Format ISO timestamps for display in the dashboard header.
+ *
+ * Args:
+ *   value (string): ISO-8601 timestamp returned by the API.
+ *
+ * Returns:
+ *   string – Locale-aware date/time. Invalid inputs fall back to the raw value so
+ *   developers can spot malformed data.
+ */
 function formatDateTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) {
@@ -59,6 +92,15 @@ function formatDateTime(value: string) {
   return dateTimeFormatter.format(date);
 }
 
+/**
+ * Creates a short inline preview of a chat by concatenating message snippets.
+ *
+ * Args:
+ *   content (Array<{ role?: string | null; content?: string | null }>): Chat messages.
+ *
+ * Returns:
+ *   string – Messages joined with separators, truncated to reduce table width.
+ */
 function formatChatPreview(content: DashboardResponse["all_chats"][number]["messages"]) {
   return content
     .map(
@@ -70,6 +112,28 @@ function formatChatPreview(content: DashboardResponse["all_chats"][number]["mess
     .join(" • ");
 }
 
+/**
+ * Mission dashboard client component.
+ *
++ Purpose:
+ *   - Maintains filter state and dispatches requests to refresh mission analytics.
+ *   - Renders tabbed views for overview metrics, raw chats, mission breakdown, and model usage.
+ *
+ * Props:
+ *   initialData (DashboardResponse): Pre-fetched payload injected by the server component.
+ *
+ * State:
+ *   - dashboard (DashboardResponse): Current dataset backing the UI.
+ *   - activeTab (TabKey): Controls which section is visible.
+ *   - filters (FilterState): Raw filter values entered by the user.
+ *   - loading / error: Track asynchronous fetch status for inline messaging.
+ *
+ * Usage:
+ *   <DashboardContent initialData={dashboard} />
+ *
+ * Side Effects:
+ *   - Invokes `fetchDashboard` on filter changes, reading from the FastAPI backend.
+ */
 export default function DashboardContent({ initialData }: Props) {
   const [dashboard, setDashboard] = useState<DashboardResponse>(initialData);
   const [activeTab, setActiveTab] = useState<TabKey>("overview");
@@ -81,6 +145,12 @@ export default function DashboardContent({ initialData }: Props) {
     setFilters((prev) => ({ ...prev, [key]: value }));
   };
 
+  /**
+   * Restore default filters and reload the dashboard.
+   *
+   * Error Handling:
+   *   - Catches network/HTTP failures and exposes the message in component state.
+   */
   const resetFilters = useCallback(async () => {
     setFilters(defaultFilters);
     setError(null);
@@ -95,6 +165,13 @@ export default function DashboardContent({ initialData }: Props) {
     }
   }, []);
 
+  /**
+   * Apply user-selected filters and request an updated dataset from the API.
+   *
+   * Notes:
+   *   - Converts numeric inputs from `<select>` fields (strings) into numbers
+   *     before calling `fetchDashboard` so query params remain accurate.
+   */
   const applyFilters = useCallback(async () => {
     setError(null);
     setLoading(true);

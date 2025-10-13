@@ -1,13 +1,14 @@
 services:
   backend:
+    # FastAPI API service exposes mission analytics to the frontend.
     build:
       context: .
       dockerfile: backend/Dockerfile
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
-      - .:/app
-      - ./data:/app/data
+      - .:/app              # Mount code for hot reload during development.
+      - ./data:/app/data    # Share mission exports with the container.
     environment:
       - MISSION_DATA_FILE=${MISSION_DATA_FILE:-}
       - MISSION_USER_NAMES_FILE=${MISSION_USER_NAMES_FILE:-}
@@ -15,15 +16,16 @@ services:
       - .env
 
   frontend:
+    # Next.js dashboard rendered by developers in watch mode.
     build:
       context: .
       dockerfile: frontend/Dockerfile
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     volumes:
-      - ./frontend:/app
-      - frontend_node_modules:/app/node_modules
-      - ./data:/app/data
+      - ./frontend:/app                      # Sync app code for live reload.
+      - frontend_node_modules:/app/node_modules  # Persist large dependency tree.
+      - ./data:/app/data                     # Allow frontend to read static assets if needed.
     environment:
       - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
       - API_BASE_URL=${API_BASE_URL:-http://backend:8000}
