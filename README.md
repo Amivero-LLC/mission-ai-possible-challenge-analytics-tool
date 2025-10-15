@@ -19,9 +19,39 @@ Mission Challenge Analytics is a two-service stack that exposes AI mission telem
 
 ## Getting Started
 
+### For End Users (Quick Setup)
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/Amivero-LLC/amichat-platform.git
+   cd amichat-platform
+   ```
+
+2. **Configure environment variables**
+   ```bash
+   cp .env.example .env
+   ```
+   Edit `.env` and add your OpenWebUI credentials:
+   ```
+   OPEN_WEBUI_HOSTNAME=https://amichat.prod.amivero-solutions.com
+   OPEN_WEBUI_API_KEY=your_api_key_here
+   ```
+
+3. **Start the dashboard**
+   ```bash
+   docker compose up -d
+   ```
+
+4. **Access the dashboard**
+   Open your browser to: http://localhost:3000
+
+That's it! The dashboard will fetch live data from OpenWebUI and display mission analytics.
+
+### For Developers
+
 1. Clone the repository and change into it.
 2. Copy `.env.example` to `.env` and adjust values as needed.
-3. Place an export file in `data/` (e.g. `data/all-chats-export-20240501.json`). A matching `data/user_names.json` is optional but recommended.
+3. For local file analysis, place an export file in `data/` (e.g. `data/all-chats-export-20240501.json`). A matching `data/user_names.json` is optional but recommended.
 
 ### Quick Start (Docker + Make)
 
@@ -66,6 +96,33 @@ make up
 ```
 
 The compose stack mounts the repository, enables hot reload, and shares `data/` into both containers. Use `make down` to stop services and `make logs` to tail output.
+
+## Dashboard Features
+
+The enhanced dashboard provides comprehensive mission analytics with:
+
+### **Filtering & Search**
+- 📅 **Date Range Filter** - Filter by creation date (Date From/Date To)
+- 🎯 **Challenge Dropdown** - Select specific missions from available challenges
+- 👤 **User Name Dropdown** - Filter by participant (shows friendly names)
+- ✅ **Status Filter** - View All/Completed/In Progress missions
+- 🔄 **Leaderboard Sort** - Sort by Completions/Attempts/Efficiency
+
+### **Data Views**
+- **📊 Overview Tab** - Leaderboard with rankings, timestamps, and mission breakdown cards
+- **💬 All Chats Tab** - Complete chat history with timestamps and mission status
+- **🎯 Missions Tab** - Detailed mission statistics and success rates
+- **🤖 Models Tab** - AI model usage analytics
+
+### **Export Options**
+- 📥 **CSV Export** - Download current tab data as CSV file
+- 📥 **Excel Export** - Download current tab data as Excel (.xlsx) file
+- Exports respect applied filters
+
+### **Summary Metrics**
+- Total Chats, Mission Attempts, Completions, Success Rate
+- Unique Participants, Participation Rate
+- Models Used, Activity Timestamps
 
 ## Data Sources
 
