@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 import requests
 from fastapi import HTTPException
@@ -27,6 +28,226 @@ from ..schemas import (
     SortOption,
     Summary,
 )
+
+
+# Cache file paths
+USERS_CACHE_FILE = Path(DATA_DIR) / "users.json"
+MODELS_CACHE_FILE = Path(DATA_DIR) / "models.json"
+
+
+def _load_json_cache(file_path: Path) -> Optional[List[dict]]:
+    """Load data from a JSON cache file if it exists."""
+    if not file_path.exists():
+        return None
+    try:
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else None
+    except (json.JSONDecodeError, IOError):
+        return None
+
+
+def _save_json_cache(file_path: Path, data: List[dict]) -> None:
+    """Save data to a JSON cache file."""
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(file_path, 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+def _merge_and_update_cache(
+    file_path: Path,
+    new_records: List[dict],
+    id_key: str = "id"
+) -> List[dict]:
+    """
+    Merge new records with existing cache, updating existing records by ID.
+
+    Args:
+        file_path: Path to the cache file
+        new_records: List of new records to merge
+        id_key: The key to use for identifying unique records
+
+    Returns:
+        The merged list of records
+    """
+    existing = _load_json_cache(file_path) or []
+    existing_map = {record.get(id_key): record for record in existing if record.get(id_key)}
+
+    # Update existing records and add new ones
+    for record in new_records:
+        record_id = record.get(id_key)
+        if record_id:
+            existing_map[record_id] = record
+
+    merged = list(existing_map.values())
+    _save_json_cache(file_path, merged)
+    return merged
+
+
+def _extract_model_metadata(records: Iterable[dict]) -> Tuple[Dict[str, str], Set[str], Dict[str, str]]:
+    """
+    Normalize a sequence of model records into lookup maps and mission classifications.
+
+    Args:
+        records (Iterable[dict]): Raw model objects returned by OpenWebUI or loaded
+            from the bundled sample export.
+
+    Returns:
+        tuple:
+            - dict[str, str]: Mapping of ``model_alias -> friendly_name``.
+            - set[str]: Aliases flagged with the ``Missions`` tag (case-insensitive).
+            - dict[str, str]: Mapping of ``model_alias -> canonical_id`` used for mission matching.
+    """
+    lookup: Dict[str, str] = {}
+    mission_aliases: Set[str] = set()
+    alias_to_primary: Dict[str, str] = {}
+
+    for item in records:
+        if not isinstance(item, dict):
+            continue
+
+        # Handle production data format with model_id and raw fields
+        if "model_id" in item and "raw" in item:
+            raw = item.get("raw", {})
+            if isinstance(raw, dict):
+                # Use raw data as the source
+                item = raw
+
+        identifiers: Set[str] = set()
+
+        def add_identifier(value: Optional[str]) -> None:
+            if value is None:
+                return
+            # Skip non-string values (e.g., boolean True from preset field)
+            if not isinstance(value, str):
+                return
+            text = value.strip()
+            if not text:
+                return
+            identifiers.add(text)
+
+        # Gather identifiers from top level fields.
+        for key in ("id", "slug", "model", "preset", "name", "display_name", "displayName", "model_id"):
+            add_identifier(item.get(key))
+
+        # Include identifiers defined within nested metadata blocks.
+        meta = item.get("meta")
+        if isinstance(meta, dict):
+            for key in ("id", "slug", "model", "preset", "name"):
+                add_identifier(meta.get(key))
+
+        info = item.get("info")
+        if isinstance(info, dict):
+            for key in ("id", "slug", "model", "preset", "name"):
+                add_identifier(info.get(key))
+            info_meta = info.get("meta")
+            if isinstance(info_meta, dict):
+                for key in ("id", "slug", "model", "preset", "name"):
+                    add_identifier(info_meta.get(key))
+
+        if not identifiers:
+            continue
+
+        # Pick a canonical identifier that retains mission context when available (prefer slugs/presets).
+        # Filter out non-string values like boolean True
+        preferred_order = (
+            item.get("slug"),
+            item.get("model"),
+            item.get("preset"),
+            info.get("slug") if isinstance(info, dict) else None,
+            info.get("model") if isinstance(info, dict) else None,
+            info.get("preset") if isinstance(info, dict) else None,
+            item.get("id"),
+            info.get("id") if isinstance(info, dict) else None,
+        )
+        primary_id = next((str(value) for value in preferred_order if value and isinstance(value, str)), None)
+        if not primary_id:
+            primary_id = next(iter(identifiers))
+
+        identifiers.add(primary_id)
+
+        name = item.get("name")
+        if not name and isinstance(info, dict):
+            name = info.get("name")
+        if not name and isinstance(meta, dict):
+            name = meta.get("name")
+        display_name = str(name or primary_id)
+
+        tags: List[str] = []
+        for candidate in (
+            item.get("tags"),
+            meta.get("tags") if isinstance(meta, dict) else None,
+            (
+                info.get("meta", {}).get("tags")
+                if isinstance(info, dict)
+                and isinstance(info.get("meta"), dict)
+                else None
+            ),
+        ):
+            if isinstance(candidate, list):
+                for tag in candidate:
+                    if tag:
+                        # Handle both string tags and dict tags with "name" property
+                        if isinstance(tag, dict):
+                            tag_name = tag.get("name")
+                            if tag_name:
+                                tags.append(str(tag_name))
+                        elif isinstance(tag, str):
+                            # Only add string tags, skip boolean or other types
+                            tags.append(tag)
+
+        for identifier in identifiers:
+            lookup[identifier] = display_name
+            alias_to_primary[identifier] = primary_id
+
+        if any(tag.lower() == "missions" for tag in tags):
+            mission_aliases.update(identifiers)
+
+    return lookup, mission_aliases, alias_to_primary
+
+
+def _read_cached_users() -> Optional[Dict[str, str]]:
+    """Read users from the cache file and return as a user_id -> name mapping."""
+    cached_users = _load_json_cache(USERS_CACHE_FILE)
+    if not cached_users:
+        return None
+
+    user_map: Dict[str, str] = {}
+    for user in cached_users:
+        user_id = user.get("user_id")
+        name = user.get("name")
+        if user_id and name:
+            user_map[user_id] = name
+
+    return user_map if user_map else None
+
+
+def _read_cached_models() -> Optional[Tuple[Dict[str, str], Set[str], Dict[str, str]]]:
+    """Read models from the cache file and extract metadata."""
+    cached_models = _load_json_cache(MODELS_CACHE_FILE)
+    if not cached_models:
+        return None
+
+    return _extract_model_metadata(cached_models)
+
+
+def _load_model_metadata(model_file: Optional[str] = None) -> Tuple[Dict[str, str], Set[str], Dict[str, str]]:
+    """
+    Build lookup tables for model names and mission classification.
+
+    Fetches live data from the OpenWebUI API, falling back to cache if unavailable.
+    """
+    remote_metadata = _fetch_remote_models()
+    if remote_metadata is not None:
+        return remote_metadata
+
+    # Fall back to cached models if API is unavailable
+    cached_metadata = _read_cached_models()
+    if cached_metadata is not None:
+        return cached_metadata
+
+    # Return empty lookups if both API and cache are unavailable
+    return {}, set(), {}
 
 
 def _fetch_remote_chats() -> Optional[List[dict]]:
@@ -81,6 +302,8 @@ def _fetch_remote_users() -> Optional[Dict[str, str]]:
     elif not isinstance(payload, list):
         raise HTTPException(status_code=502, detail="Unexpected users response format from OpenWebUI")
 
+    # Normalize user records for caching
+    user_records = []
     user_map: Dict[str, str] = {}
     for item in payload:
         user_id = item.get("id")
@@ -91,7 +314,49 @@ def _fetch_remote_users() -> Optional[Dict[str, str]]:
         display = name.strip() or (email.split("@")[0] if email else user_id[:8])
         user_map[user_id] = display
 
+        # Store normalized user record for cache
+        user_records.append({
+            "user_id": user_id,
+            "name": display,
+            "email": email
+        })
+
+    # Save/update cache
+    _merge_and_update_cache(USERS_CACHE_FILE, user_records, id_key="user_id")
+
     return user_map
+
+
+def _fetch_remote_models() -> Optional[Tuple[Dict[str, str], Set[str], Dict[str, str]]]:
+    """Retrieve model metadata from OpenWebUI to translate model IDs into names."""
+    hostname = os.getenv("OPEN_WEBUI_HOSTNAME") or os.getenv("OPEN_WEB_UI_HOSTNAME")
+    api_key = os.getenv("OPEN_WEBUI_API_KEY")
+
+    if not hostname or not api_key:
+        return None
+
+    url = f"{hostname.rstrip('/')}/api/v1/models"
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    try:
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+    except requests.exceptions.RequestException:
+        return None
+
+    payload = response.json()
+    if isinstance(payload, dict):
+        records = payload.get("data") or payload.get("models") or []
+    elif isinstance(payload, list):
+        records = payload
+    else:
+        return None
+
+    # Save/update cache - store the raw records
+    if records:
+        _merge_and_update_cache(MODELS_CACHE_FILE, list(records), id_key="id")
+
+    return _extract_model_metadata(records)
 
 
 def _pick_data_file(explicit_file: Optional[str]) -> str:
@@ -111,10 +376,12 @@ def _build_chat_previews(
     filter_status: Optional[str] = None,
     filter_date_from: Optional[str] = None,
     filter_date_to: Optional[str] = None,
+    model_lookup: Optional[Dict[str, str]] = None,
 ) -> List[ChatPreview]:
     """Transform analyzer results into lightweight cards for the frontend, applying filters."""
     mission_lookup: Dict[int, Dict] = {chat["chat_num"]: chat for chat in analyzer.mission_chats}
     previews: List[ChatPreview] = []
+    model_lookup = model_lookup or {}
 
     # Parse date filters if provided
     date_from_ts = None
@@ -161,8 +428,9 @@ def _build_chat_previews(
         # For mission-specific filters, check if it's a mission chat
         if is_mission and mission_chat:
             mission_info = mission_chat["mission_info"]
-            
-            if filter_challenge and mission_info["mission_id"] != filter_challenge:
+            mission_model = mission_chat["model"]
+
+            if filter_challenge and not analyzer._mission_matches_filter(mission_model, filter_challenge):
                 continue
             if filter_status:
                 if filter_status.lower() == "completed" and not completed:
@@ -174,6 +442,32 @@ def _build_chat_previews(
             if filter_challenge or filter_status:
                 continue
 
+        # Resolve a user-friendly model name using the lookup map. Falls back to the raw
+        # identifier when no metadata is available.
+        display_model = "Unknown"
+        raw_model = "Unknown"
+        for entry in models:
+            candidate_id = None
+            candidate_name = None
+            if isinstance(entry, str):
+                candidate_id = entry
+            elif isinstance(entry, dict):
+                candidate_id = entry.get("id") or entry.get("model") or entry.get("slug")
+                candidate_name = entry.get("name") or entry.get("display_name")
+            if candidate_id:
+                raw_model = candidate_id
+                display_model = model_lookup.get(candidate_id) or candidate_name or candidate_id
+                break
+
+        if display_model == "Unknown" and messages:
+            for msg in messages:
+                candidate = msg.get("model")
+                candidate_name = msg.get("modelName") or msg.get("model_name")
+                if candidate:
+                    raw_model = candidate
+                    display_model = model_lookup.get(candidate) or candidate_name or candidate
+                    break
+
         previews.append(
             ChatPreview(
                 num=index,
@@ -181,7 +475,7 @@ def _build_chat_previews(
                 user_id=user_id,
                 user_name=analyzer.get_user_name(user_id),
                 created_at=item.get("created_at"),
-                model=next(iter(models), "Unknown"),
+                model=display_model if display_model != "Unknown" else model_lookup.get(raw_model, raw_model),
                 message_count=len(messages),
                 is_mission=is_mission,
                 completed=completed,
@@ -293,15 +587,24 @@ def build_dashboard_response(
     # Resolve user names file relative to DATA_DIR by default
     resolved_user_names = user_names_file or str(Path(DATA_DIR) / "user_names.json")
 
+    model_lookup, mission_model_aliases, alias_to_primary = _load_model_metadata()
+
     remote_chats = _fetch_remote_chats()
     if remote_chats is not None:
-        # Prefer live data when OpenWebUI is reachable; fall back to static exports otherwise.
-        remote_users = _fetch_remote_users() or {}
+        # Prefer live data when OpenWebUI is reachable; fall back to cached data otherwise.
+        remote_users = _fetch_remote_users()
+        if remote_users is None:
+            # Fall back to cached users if API is unavailable
+            remote_users = _read_cached_users() or {}
+
         analyzer = MissionAnalyzer(
             json_file=None,
             data=remote_chats,
             user_names_file=resolved_user_names,
             user_names=remote_users,
+            model_lookup=model_lookup,
+            mission_model_aliases=mission_model_aliases,
+            model_alias_to_primary=alias_to_primary,
             verbose=False,
         )
     else:
@@ -309,6 +612,9 @@ def build_dashboard_response(
         analyzer = MissionAnalyzer(
             resolved_data_file,
             user_names_file=resolved_user_names,
+            model_lookup=model_lookup,
+            mission_model_aliases=mission_model_aliases,
+            model_alias_to_primary=alias_to_primary,
             verbose=False,
         )
 
@@ -331,6 +637,7 @@ def build_dashboard_response(
         filter_status=filter_status,
         filter_date_from=filter_date_from,
         filter_date_to=filter_date_to,
+        model_lookup=model_lookup,
     )
     model_stats = _build_model_stats(chats)
 

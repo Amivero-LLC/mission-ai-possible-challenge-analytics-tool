@@ -451,8 +451,8 @@ def generate_enhanced_dashboard(analyzer, output_file=None):
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎯 Mission Challenge Dashboard</h1>
-            <div class="subtitle">OpenWebUI Employee Engagement Tracker</div>
+            <h1>Amivero's Mission: AI Possible</h1>
+            <div class="subtitle">🎯 Mission Challenge Dashboard</div>
             <div class="timestamp">Last Updated: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</div>
         </div>
         

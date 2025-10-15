@@ -10,7 +10,6 @@ feed both CLI tools and the FastAPI backend.
 import json
 import re
 from collections import defaultdict
-from datetime import datetime
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -35,7 +34,17 @@ class MissionAnalyzer:
         58.3
     """
 
-    def __init__(self, json_file=None, user_names_file=None, verbose=True, data=None, user_names=None):
+    def __init__(
+        self,
+        json_file=None,
+        user_names_file=None,
+        verbose=True,
+        data=None,
+        user_names=None,
+        model_lookup=None,
+        mission_model_aliases=None,
+        model_alias_to_primary=None,
+    ):
         """
         Initialize the analyzer with either a file path or an in-memory dataset.
 
@@ -50,6 +59,14 @@ class MissionAnalyzer:
                 the export JSON). Supply this when streaming from OpenWebUI APIs.
             user_names (dict[str, str] | None): Additional name overrides, such
                 as a dictionary returned from ``/api/v1/users/all``.
+            model_lookup (dict[str, str] | None): Mapping of model aliases to
+                friendly names supplied by the OpenWebUI models API. Used to
+                present readable mission identifiers when regex parsing fails.
+            mission_model_aliases (Iterable[str] | None): Aliases flagged with the
+                ``Missions`` tag in the models metadata. Falls back to regex
+                detection when omitted.
+            model_alias_to_primary (dict[str, str] | None): Mapping of model aliases
+                to canonical identifiers (typically slugs) preserved in OpenWebUI.
 
         Raises:
             ValueError: If both ``json_file`` and ``data`` are omitted, the class
@@ -68,6 +85,21 @@ class MissionAnalyzer:
         self.mission_chats = []
         self.user_names = {}
         self.verbose = verbose
+        self.model_lookup = {str(alias): str(name) for alias, name in (model_lookup or {}).items()}
+        self.model_aliases_lower = {alias.lower(): alias for alias in self.model_lookup.keys()}
+        self.alias_to_primary = {
+            str(alias): str(primary) for alias, primary in (model_alias_to_primary or {}).items()
+        }
+        # Ensure primary identifiers map to themselves for quick lookups.
+        for alias, primary in list(self.alias_to_primary.items()):
+            self.alias_to_primary.setdefault(primary, primary)
+        for alias in self.model_lookup.keys():
+            self.alias_to_primary.setdefault(alias, alias)
+
+        self.mission_model_aliases = {str(identifier) for identifier in (mission_model_aliases or [])}
+        self.mission_model_aliases_lower = {
+            alias.lower(): alias for alias in self.mission_model_aliases
+        }
         # Tracks per-user aggregates used to build leaderboard and summaries.
         self.user_stats = defaultdict(
             lambda: {
@@ -217,28 +249,117 @@ class MissionAnalyzer:
                 print(f"Error: Invalid JSON in {self.json_file}")
             self.data = []
 
-    def is_mission_model(self, model_name):
+    def _resolve_alias(self, model_name):
         """
-        Determine whether a model string represents a mission challenge.
+        Find the stored alias key that matches the provided model string (case-insensitive).
+        """
+        if model_name is None:
+            return None
+        model_str = str(model_name)
+        return self.model_aliases_lower.get(model_str.lower())
 
-        Args:
-            model_name (str): Model identifier taken from chat metadata.
+    def _resolve_mission_alias(self, model_name):
+        """
+        Identify whether the supplied model string matches a mission-tagged alias.
+        """
+        if model_name is None:
+            return None
+        return self.mission_model_aliases_lower.get(str(model_name).lower())
 
-        Returns:
-            bool: True when the model matches any of the regex patterns defined
-            in ``self.mission_patterns`` (case-insensitive).
+    def _resolve_primary_identifier(self, model_name):
+        """
+        Map a model string to the canonical identifier used for mission detection.
+        """
+        alias = self._resolve_alias(model_name)
+        if alias:
+            return self.alias_to_primary.get(alias, alias)
+        if model_name is None:
+            return None
+        return self.alias_to_primary.get(str(model_name), str(model_name))
 
-        Business Rules:
-            Mission models are identified heuristically via substring/regex
-            matches on tokens like ``maip``, ``mission``, ``week``, and
-            ``challenge``. These rules encapsulate naming conventions used by
-            the challenge program.
+    def _matches_mission_pattern(self, model_name):
+        """
+        Fallback regex heuristics for mission detection when metadata is unavailable.
         """
         model_lower = str(model_name).lower()
         for pattern in self.mission_patterns:
             if re.search(pattern, model_lower):
                 return True
         return False
+
+    def _resolve_display_name(self, model_name):
+        """
+        Retrieve the user-friendly name associated with a model identifier.
+        """
+        if model_name is None:
+            return None
+        direct = self.model_lookup.get(str(model_name))
+        if direct:
+            return direct
+        alias = self._resolve_alias(model_name)
+        if alias:
+            return self.model_lookup.get(alias)
+        return None
+
+    def is_mission_model(self, model_name):
+        """
+        Determine whether a model string represents a mission challenge.
+        """
+        if self._resolve_mission_alias(model_name):
+            return True
+        primary = self._resolve_primary_identifier(model_name)
+        if primary and self._resolve_mission_alias(primary):
+            return True
+        return self._matches_mission_pattern(model_name)
+
+    def get_mission_model_id(self, model_name):
+        """
+        Return the canonical mission model ID when available, otherwise the original
+        string if it satisfies the heuristic mission patterns.
+        """
+        alias = self._resolve_mission_alias(model_name)
+        if alias:
+            return self.alias_to_primary.get(alias, alias)
+        primary = self._resolve_primary_identifier(model_name)
+        if primary and self._resolve_mission_alias(primary):
+            return primary
+        if self._matches_mission_pattern(model_name):
+            return primary or (str(model_name) if model_name is not None else None)
+        return None
+
+    @staticmethod
+    def _normalize_model_identifier(entry):
+        """
+        Extract the most relevant identifier from mixed model representations.
+        """
+        if entry is None:
+            return None
+        if isinstance(entry, str):
+            return entry
+        if isinstance(entry, dict):
+            preferred_keys = (
+                "slug",
+                "model",
+                "model_slug",
+                "modelSlug",
+                "preset",
+                "name",
+                "display_name",
+                "displayName",
+                "id",
+            )
+            for key in preferred_keys:
+                value = entry.get(key)
+                if value:
+                    return value
+            # Fallback to nested identifiers commonly used in OpenWebUI exports.
+            info = entry.get("info")
+            if isinstance(info, dict):
+                for key in ("id", "slug", "model"):
+                    value = info.get(key)
+                    if value:
+                        return value
+        return str(entry)
 
     def extract_mission_info(self, model_name):
         """
@@ -267,12 +388,57 @@ class MissionAnalyzer:
         challenge_match = re.search(r"challenge[-_]?(\d+)", model_str)
         challenge = int(challenge_match.group(1)) if challenge_match else None
 
+        display_name = self._resolve_display_name(model_name) or model_name
+
         return {
             "model": model_name,
             "week": week,
             "challenge": challenge,
-            "mission_id": f"Week {week}, Challenge {challenge}" if week and challenge else model_name,
+            "mission_id": str(display_name),
         }
+
+    def _mission_matches_filter(self, mission_model, filter_value):
+        """
+        Check if a mission model matches a filter value.
+
+        The filter value can be either:
+        - A display name (e.g., "Anthropic Claude 3: Haiku")
+        - A model ID or alias (e.g., "anthropic.claude-3-haiku-20240307-v1:0")
+
+        Args:
+            mission_model (str): The canonical mission model identifier
+            filter_value (str): The filter value to match against
+
+        Returns:
+            bool: True if the mission matches the filter
+        """
+        if not filter_value:
+            return True
+
+        # Get the mission info for this model
+        mission_info = self.extract_mission_info(mission_model)
+        mission_display_name = mission_info["mission_id"]
+
+        # Direct match with display name
+        if mission_display_name == filter_value:
+            return True
+
+        # Check if filter_value is an alias that resolves to this mission's display name
+        filter_display = self._resolve_display_name(filter_value)
+        if filter_display and filter_display == mission_display_name:
+            return True
+
+        # Check if the raw model identifiers match
+        if str(mission_model).lower() == str(filter_value).lower():
+            return True
+
+        # Check if the primary identifiers match
+        mission_primary = self._resolve_primary_identifier(mission_model)
+        filter_primary = self._resolve_primary_identifier(filter_value)
+        if mission_primary and filter_primary and mission_primary.lower() == filter_primary.lower():
+            return True
+
+        return False
 
     def check_success(self, messages):
         """
@@ -358,16 +524,50 @@ class MissionAnalyzer:
             # Check if any model is a mission model
             mission_model = None
             for model in models:
-                if self.is_mission_model(model):
-                    mission_model = model
+                normalized_model = self._normalize_model_identifier(model)
+                for candidate in (
+                    normalized_model,
+                    model if isinstance(model, str) else None,
+                    str(model) if model is not None else None,
+                ):
+                    if not candidate:
+                        continue
+                    mission_match = self.get_mission_model_id(candidate)
+                    if mission_match:
+                        mission_model = mission_match
+                        break
+                    if self._matches_mission_pattern(candidate):
+                        mission_model = str(candidate)
+                        break
+                if mission_model:
                     break
 
             # Also check individual messages
             if not mission_model:
                 for msg in messages:
-                    msg_model = msg.get("model", "")
-                    if msg_model and self.is_mission_model(msg_model):
-                        mission_model = msg_model
+                    msg_model = (
+                        msg.get("model")
+                        or msg.get("model_id")
+                        or msg.get("modelId")
+                        or msg.get("modelSlug")
+                        or msg.get("model_slug")
+                    )
+                    normalized_msg_model = self._normalize_model_identifier(msg_model) if isinstance(msg_model, dict) else msg_model
+                    for candidate in (
+                        normalized_msg_model,
+                        msg_model if isinstance(msg_model, str) else None,
+                        str(msg_model) if msg_model is not None else None,
+                    ):
+                        if not candidate:
+                            continue
+                        mission_match = self.get_mission_model_id(candidate)
+                        if mission_match:
+                            mission_model = mission_match
+                            break
+                        if self._matches_mission_pattern(candidate):
+                            mission_model = str(candidate)
+                            break
+                    if mission_model:
                         break
 
             if mission_model:
@@ -380,7 +580,7 @@ class MissionAnalyzer:
                 completed = self.check_success(messages)
 
                 # Apply filters
-                if filter_challenge and mission_info["mission_id"] != filter_challenge:
+                if filter_challenge and not self._mission_matches_filter(mission_model, filter_challenge):
                     continue
                 if filter_user and user_id != filter_user:
                     continue
@@ -501,7 +701,7 @@ class MissionAnalyzer:
 
         success_rate = (total_completions / total_attempts * 100) if total_attempts > 0 else 0
 
-        # Get unique missions and weeks
+        # Get unique missions and weeks from attempted chats
         unique_missions = set()
         unique_weeks = set()
         for chat in self.mission_chats:
@@ -509,6 +709,22 @@ class MissionAnalyzer:
             week = chat["mission_info"]["week"]
             if week is not None:
                 unique_weeks.add(week)
+
+        # Build missions_list from all models with "Missions" tag (from Open WebUI API)
+        # This shows ALL available mission models, not just the ones that have been attempted
+        if self.mission_model_aliases:
+            missions_list = []
+            seen_names = set()
+            for alias in self.mission_model_aliases:
+                # Get the friendly name for this mission model
+                display_name = self.model_lookup.get(alias, alias)
+                if display_name not in seen_names:
+                    missions_list.append(display_name)
+                    seen_names.add(display_name)
+            missions_list = sorted(missions_list)
+        else:
+            # Fallback: if no models with "Missions" tag found, use model IDs from chat records
+            missions_list = sorted(unique_missions)
 
         # Get unique users with their names from ALL chats (not just mission participants)
         users_list = []
@@ -521,7 +737,7 @@ class MissionAnalyzer:
                     "user_name": self.get_user_name(user_id)
                 })
                 seen_users.add(user_id)
-        
+
         # Sort by user name
         users_list.sort(key=lambda x: x["user_name"])
 
@@ -532,7 +748,7 @@ class MissionAnalyzer:
             "success_rate": success_rate,
             "unique_users": unique_users,
             "unique_missions": len(unique_missions),
-            "missions_list": sorted(unique_missions),
+            "missions_list": missions_list,
             "weeks_list": sorted(list(unique_weeks)),
             "users_list": users_list,
         }

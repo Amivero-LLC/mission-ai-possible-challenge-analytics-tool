@@ -388,8 +388,8 @@ export default function DashboardContent({ initialData }: Props) {
   return (
     <div className="dashboard-container">
       <header className="dashboard-header">
-        <h1>🎯 Mission Challenge Dashboard</h1>
-        <p className="dashboard-subtitle">OpenWebUI Employee Engagement Tracker</p>
+        <h1>Amivero's Mission: AI Possible</h1>
+        <p className="dashboard-subtitle">🎯 Mission Challenge Dashboard</p>
         <p className="dashboard-timestamp">
           Last Updated: {formatDateTime(dashboard.generated_at)}
         </p>

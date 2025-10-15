@@ -43,7 +43,15 @@ htmlcov/
 public/*.html
 
 # Chat export snapshots and other large data dumps
+# Exclude all production data files
 data/all-chats-export-*.json
+data/*.json
+data/*.csv
+data/*.xlsx
+
+# Keep example/template files
+!data/.gitkeep
+!data/README.md
 
 ##########################
 # Node / frontend artifacts
