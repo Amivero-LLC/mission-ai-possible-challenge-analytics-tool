@@ -113,19 +113,7 @@ class MissionAnalyzer:
         self.points_mapping = {str(alias): int(pts) for alias, pts in (points_mapping or {}).items()}
         self.difficulty_mapping = {str(alias): str(diff) for alias, diff in (difficulty_mapping or {}).items()}
         # Tracks per-user aggregates used to build leaderboard and summaries.
-        self.user_stats = defaultdict(
-            lambda: {
-                "user_id": "",
-                "missions_attempted": [],
-                "missions_completed": [],
-                "completed_mission_models": [],  # Track models of completed missions for points
-                "total_attempts": 0,
-                "total_completions": 0,
-                "total_messages": 0,
-                "first_attempt": None,
-                "last_attempt": None,
-            }
-        )
+        self.user_stats = defaultdict(self._create_user_stats_entry)
 
         # Mission model patterns
         self.mission_patterns = [
@@ -163,6 +151,23 @@ class MissionAnalyzer:
             self.load_user_names()
         if not self.data:
             self.load_data()
+
+    def _create_user_stats_entry(self):
+        """
+        Provide a fresh container for per-user aggregation stats.
+        """
+        return {
+            "user_id": "",
+            "missions_attempted": [],
+            "missions_completed": [],
+            "completed_mission_models": [],  # Track models of completed missions for points
+            "total_attempts": 0,
+            "total_completions": 0,
+            "total_messages": 0,
+            "first_attempt": None,
+            "last_attempt": None,
+            "credited_completion_keys": set(),
+        }
 
     def load_user_names(self, merge=False):
         """
@@ -411,6 +416,117 @@ class MissionAnalyzer:
             "mission_id": str(display_name),
         }
 
+    def _extract_model_candidates(self, entry):
+        """
+        Produce a list of string identifiers that might reference a model.
+        """
+        candidates = []
+
+        if entry is None:
+            return candidates
+
+        if isinstance(entry, str):
+            value = entry.strip()
+            if value:
+                candidates.append(value)
+            return candidates
+
+        if isinstance(entry, dict):
+            normalized = self._normalize_model_identifier(entry)
+            if normalized:
+                candidates.append(str(normalized))
+
+            for key in (
+                "id",
+                "model",
+                "slug",
+                "model_slug",
+                "modelSlug",
+                "name",
+                "display_name",
+                "displayName",
+                "preset",
+            ):
+                value = entry.get(key)
+                if value:
+                    value_str = str(value).strip()
+                    if value_str and value_str not in candidates:
+                        candidates.append(value_str)
+
+            info = entry.get("info")
+            if isinstance(info, dict):
+                for key in ("id", "slug", "model"):
+                    value = info.get(key)
+                    if value:
+                        value_str = str(value).strip()
+                        if value_str and value_str not in candidates:
+                            candidates.append(value_str)
+
+            return candidates
+
+        if isinstance(entry, (list, tuple, set)):
+            for item in entry:
+                for candidate in self._extract_model_candidates(item):
+                    if candidate not in candidates:
+                        candidates.append(candidate)
+            return candidates
+
+        value = str(entry).strip()
+        if value:
+            candidates.append(value)
+        return candidates
+
+    def _get_mission_from_entry(self, entry):
+        """
+        Resolve a mission identifier from a mixed model representation.
+        """
+        for candidate in self._extract_model_candidates(entry):
+            mission_id = self.get_mission_model_id(candidate)
+            if mission_id:
+                return mission_id
+        return None
+
+    def _get_message_mission_id(self, message):
+        """
+        Identify the mission model associated with a specific chat message.
+        """
+        if not isinstance(message, dict):
+            return None
+
+        seen = set()
+        candidates = []
+        for key in ("model", "model_id", "modelId", "modelSlug", "model_slug"):
+            value = message.get(key)
+            for candidate in self._extract_model_candidates(value):
+                lower = candidate.lower()
+                if lower not in seen:
+                    candidates.append(candidate)
+                    seen.add(lower)
+
+        models_field = message.get("models")
+        for candidate in self._extract_model_candidates(models_field):
+            lower = candidate.lower()
+            if lower not in seen:
+                candidates.append(candidate)
+                seen.add(lower)
+
+        for candidate in candidates:
+            mission_id = self.get_mission_model_id(candidate)
+            if mission_id:
+                return mission_id
+        return None
+
+    def _canonical_mission_key(self, mission_model):
+        """
+        Produce a consistent lowercase key for mission comparisons.
+        """
+        if mission_model is None:
+            return None
+        primary = self._resolve_primary_identifier(mission_model)
+        if primary:
+            return str(primary).lower()
+        return str(mission_model).lower()
+
     def _mission_matches_filter(self, mission_model, filter_value):
         """
         Check if a mission model matches a filter value.
@@ -454,13 +570,15 @@ class MissionAnalyzer:
 
         return False
 
-    def check_success(self, messages):
+    def check_success(self, messages, mission_model=None):
         """
         Assess whether a mission chat ended in success.
 
         Args:
             messages (list[dict]): Sequence of chat messages. Each entry is
                 expected to include ``role`` (assistant/user) and ``content``.
+            mission_model (str | None): When provided, restrict the success
+                detection to responses tied to the supplied mission model.
 
         Returns:
             bool: True if any assistant message includes a success keyword,
@@ -471,11 +589,35 @@ class MissionAnalyzer:
             ``"mission accomplished"`` and ``"you did it"`` that appear in AI
             confirmations when a challenge is solved.
         """
+        if mission_model is not None:
+            return self.check_success_for_mission(messages, mission_model)
+
         for msg in messages:
             if msg.get("role") == "assistant":
                 content = msg.get("content", "").lower()
                 if any(keyword in content for keyword in self.success_keywords):
                     return True
+        return False
+
+    def check_success_for_mission(self, messages, mission_model):
+        """
+        Assess completion for a specific mission within a multi-mission chat.
+        """
+        mission_key = self._canonical_mission_key(mission_model)
+        if mission_key is None:
+            return False
+
+        for msg in messages:
+            if msg.get("role") != "assistant":
+                continue
+            msg_mission = self._get_message_mission_id(msg)
+            if msg_mission is None:
+                continue
+            if self._canonical_mission_key(msg_mission) != mission_key:
+                continue
+            content = msg.get("content", "").lower()
+            if any(keyword in content for keyword in self.success_keywords):
+                return True
         return False
 
     def analyze_missions(self, filter_challenge=None, filter_user=None, filter_status=None, filter_week=None):
@@ -511,102 +653,81 @@ class MissionAnalyzer:
             handle exports where model attribution differs.
         """
         self.mission_chats = []
+        self.user_stats = defaultdict(self._create_user_stats_entry)
 
         for i, item in enumerate(self.data, 1):
             chat = item.get("chat", {})
-            models = chat.get("models", [])
+            models = chat.get("models") or []
             messages = chat.get("messages", [])
 
-            # Check if any model is a mission model
-            mission_model = None
-            for model in models:
-                normalized_model = self._normalize_model_identifier(model)
-                for candidate in (
-                    normalized_model,
-                    model if isinstance(model, str) else None,
-                    str(model) if model is not None else None,
-                ):
-                    if not candidate:
-                        continue
-                    mission_match = self.get_mission_model_id(candidate)
-                    if mission_match:
-                        mission_model = mission_match
-                        break
-                    if self._matches_mission_pattern(candidate):
-                        mission_model = str(candidate)
-                        break
-                if mission_model:
-                    break
+            user_id = item.get("user_id", "Unknown")
+            if filter_user and user_id != filter_user:
+                continue
 
-            # Also check individual messages
-            if not mission_model:
-                for msg in messages:
-                    msg_model = (
-                        msg.get("model")
-                        or msg.get("model_id")
-                        or msg.get("modelId")
-                        or msg.get("modelSlug")
-                        or msg.get("model_slug")
-                    )
-                    normalized_msg_model = self._normalize_model_identifier(msg_model) if isinstance(msg_model, dict) else msg_model
-                    for candidate in (
-                        normalized_msg_model,
-                        msg_model if isinstance(msg_model, str) else None,
-                        str(msg_model) if msg_model is not None else None,
-                    ):
-                        if not candidate:
-                            continue
-                        mission_match = self.get_mission_model_id(candidate)
-                        if mission_match:
-                            mission_model = mission_match
-                            break
-                        if self._matches_mission_pattern(candidate):
-                            mission_model = str(candidate)
-                            break
-                    if mission_model:
-                        break
+            conversation_missions = []
+            mission_message_map = defaultdict(list)
 
-            if mission_model:
+            model_entries = models if isinstance(models, (list, tuple, set)) else [models]
+            for entry in model_entries:
+                mission_id = self._get_mission_from_entry(entry)
+                if mission_id and mission_id not in conversation_missions:
+                    conversation_missions.append(mission_id)
+
+            last_active_mission = None
+            for msg in messages:
+                mission_id = self._get_message_mission_id(msg)
+                if mission_id:
+                    if mission_id not in conversation_missions:
+                        conversation_missions.append(mission_id)
+                    mission_message_map[mission_id].append(msg)
+                    last_active_mission = mission_id
+                else:
+                    if msg.get("role") == "assistant":
+                        last_active_mission = None
+                    elif last_active_mission:
+                        mission_message_map[last_active_mission].append(msg)
+
+            if not conversation_missions:
+                continue
+
+            for mission_id in conversation_missions:
+                mission_message_map.setdefault(mission_id, [])
+
+            title = item.get("title", "Untitled")
+            created_at = item.get("created_at")
+            updated_at = item.get("updated_at")
+
+            for mission_model in conversation_missions:
                 mission_info = self.extract_mission_info(mission_model)
-                user_id = item.get("user_id", "Unknown")
-                title = item.get("title", "Untitled")
-                created_at = item.get("created_at")
-                updated_at = item.get("updated_at")
+                mission_messages = mission_message_map.get(mission_model, [])
+                mission_key = self._canonical_mission_key(mission_model)
+                completed = self.check_success(messages, mission_model=mission_model)
 
-                # Check if completed
-                completed = self.check_success(messages)
-
-                # Apply filters
                 if filter_challenge and not self._mission_matches_filter(mission_model, filter_challenge):
                     continue
-                if filter_user and user_id != filter_user:
-                    continue
+
                 # Skip status filtering for "not_attempted" - we need all mission chats
                 # to determine who has NOT attempted in get_challenge_results()
                 if filter_status and filter_status.lower() != "not_attempted":
-                    if filter_status.lower() == "completed" and not completed:
+                    status_filter = filter_status.lower()
+                    if status_filter == "completed" and not completed:
                         continue
-                    elif filter_status.lower() == "attempted" and completed:
+                    if status_filter == "attempted" and completed:
                         continue
 
-                # Apply week filter - check if this mission model has a week value that matches
                 if filter_week:
-                    # Get the week value for this mission model - try multiple identifier variations
                     model_week = self.week_mapping.get(mission_model)
 
-                    # Try the primary identifier
                     if not model_week:
                         primary = self._resolve_primary_identifier(mission_model)
                         if primary:
                             model_week = self.week_mapping.get(primary)
 
-                    # Try the resolved alias
                     if not model_week:
                         alias = self._resolve_alias(mission_model)
                         if alias:
                             model_week = self.week_mapping.get(alias)
 
-                    # Try lowercase variation
                     if not model_week:
                         model_lower = str(mission_model).lower()
                         for key, val in self.week_mapping.items():
@@ -614,9 +735,19 @@ class MissionAnalyzer:
                                 model_week = val
                                 break
 
-                    # Filter out missions that don't match the requested week
                     if not model_week or str(model_week) != str(filter_week):
                         continue
+
+                if mission_messages:
+                    relevant_messages = mission_messages
+                else:
+                    relevant_messages = [
+                        msg for msg in messages if self._canonical_mission_key(self._get_message_mission_id(msg)) == mission_key
+                    ]
+                    if not relevant_messages and len(conversation_missions) == 1:
+                        relevant_messages = messages
+
+                mission_message_count = len(relevant_messages)
 
                 mission_data = {
                     "chat_num": i,
@@ -624,47 +755,48 @@ class MissionAnalyzer:
                     "title": title,
                     "model": mission_model,
                     "mission_info": mission_info,
-                    "messages": messages,
-                    "message_count": len(messages),
+                    "messages": relevant_messages,
+                    "message_count": mission_message_count,
                     "created_at": created_at,
                     "completed": completed,
                 }
 
                 self.mission_chats.append(mission_data)
 
-                # Update user stats
-                self.user_stats[user_id]["user_id"] = user_id
-                self.user_stats[user_id]["missions_attempted"].append(mission_info["mission_id"])
-                self.user_stats[user_id]["total_attempts"] += 1
-                self.user_stats[user_id]["total_messages"] += len(messages)
+                stats = self.user_stats[user_id]
+                stats["user_id"] = user_id
+                stats["missions_attempted"].append(mission_info["mission_id"])
+                stats["total_attempts"] += 1
+                stats["total_messages"] += mission_message_count
 
                 if completed:
-                    self.user_stats[user_id]["missions_completed"].append(mission_info["mission_id"])
-                    self.user_stats[user_id]["completed_mission_models"].append(mission_model)
-                    self.user_stats[user_id]["total_completions"] += 1
+                    completion_key = mission_key
+                    if completion_key is None and mission_info["mission_id"] is not None:
+                        completion_key = str(mission_info["mission_id"]).lower()
+                    if completion_key is None:
+                        completion_key = str(mission_model).lower()
+                    if completion_key not in stats["credited_completion_keys"]:
+                        stats["missions_completed"].append(mission_info["mission_id"])
+                        stats["completed_mission_models"].append(mission_model)
+                        stats["total_completions"] += 1
+                        stats["credited_completion_keys"].add(completion_key)
 
-                # Track first and most recent conversation activity
-                if not self.user_stats[user_id]["first_attempt"]:
-                    self.user_stats[user_id]["first_attempt"] = created_at
+                if not stats["first_attempt"]:
+                    stats["first_attempt"] = created_at
 
-                # Use updated_at to track the most recent conversation activity for this user
-                # Compare and keep the most recent timestamp across all their conversations
-                current_last = self.user_stats[user_id]["last_attempt"]
-                conversation_updated_at = updated_at or created_at  # Fallback to created_at if updated_at not present
+                current_last = stats["last_attempt"]
+                conversation_updated_at = updated_at or created_at
 
                 if current_last is None:
-                    self.user_stats[user_id]["last_attempt"] = conversation_updated_at
+                    stats["last_attempt"] = conversation_updated_at
                 else:
-                    # Keep the most recent timestamp
-                    # Handle both numeric (Unix timestamps) and string (ISO) timestamps
                     try:
                         current_val = float(current_last) if isinstance(current_last, (int, float)) else 0
                         new_val = float(conversation_updated_at) if isinstance(conversation_updated_at, (int, float)) else 0
                         if new_val > current_val:
-                            self.user_stats[user_id]["last_attempt"] = conversation_updated_at
+                            stats["last_attempt"] = conversation_updated_at
                     except (ValueError, TypeError):
-                        # If comparison fails, just use the new value
-                        self.user_stats[user_id]["last_attempt"] = conversation_updated_at
+                        stats["last_attempt"] = conversation_updated_at
 
         return len(self.mission_chats)
 
@@ -765,7 +897,19 @@ class MissionAnalyzer:
             guarded against division by zero.
         """
         total_attempts = len(self.mission_chats)
-        total_completions = sum(1 for chat in self.mission_chats if chat["completed"])
+
+        unique_completion_pairs = set()
+        for chat in self.mission_chats:
+            if not chat["completed"]:
+                continue
+            mission_key = self._canonical_mission_key(chat["model"])
+            if mission_key is None and chat["mission_info"]["mission_id"]:
+                mission_key = str(chat["mission_info"]["mission_id"]).lower()
+            if mission_key is None and chat.get("model") is not None:
+                mission_key = str(chat["model"]).lower()
+            unique_completion_pairs.add((chat["user_id"], mission_key))
+
+        total_completions = len(unique_completion_pairs)
         unique_users = len(self.user_stats)
 
         success_rate = (total_completions / total_attempts * 100) if total_attempts > 0 else 0
