@@ -46,6 +46,7 @@ class MissionAnalyzer:
         model_alias_to_primary=None,
         week_mapping=None,
         points_mapping=None,
+        difficulty_mapping=None,
     ):
         """
         Initialize the analyzer with either a file path or an-memory dataset.
@@ -73,6 +74,8 @@ class MissionAnalyzer:
                 maip_week values extracted from custom_params.
             points_mapping (dict[str, int] | None): Mapping of model aliases to
                 maip_points_value (int) for calculating total points earned.
+            difficulty_mapping (dict[str, str] | None): Mapping of model aliases to
+                maip_difficulty_level values for mission difficulty.
 
         Raises:
             ValueError: If both ``json_file`` and ``data`` are omitted, the class
@@ -108,6 +111,7 @@ class MissionAnalyzer:
         }
         self.week_mapping = {str(alias): str(week) for alias, week in (week_mapping or {}).items()}
         self.points_mapping = {str(alias): int(pts) for alias, pts in (points_mapping or {}).items()}
+        self.difficulty_mapping = {str(alias): str(diff) for alias, diff in (difficulty_mapping or {}).items()}
         # Tracks per-user aggregates used to build leaderboard and summaries.
         self.user_stats = defaultdict(
             lambda: {
@@ -853,30 +857,139 @@ class MissionAnalyzer:
         Returns:
             list[dict]: Sorted in descending order by attempts. Each dictionary
             contains ``mission``, ``attempts``, ``completions``, ``success_rate``,
-            and ``unique_users`` metrics.
+            ``unique_users``, ``users_attempted``, ``users_completed``,
+            ``users_not_started``, ``avg_messages_to_complete``,
+            ``avg_attempts_to_complete``, ``week``, ``difficulty``, and ``points`` metrics.
 
         Usage:
             Feed directly into dashboard tables or CSV exports.
         """
-        breakdown = defaultdict(lambda: {"attempts": 0, "completions": 0, "users": set()})
+        breakdown = defaultdict(lambda: {
+            "attempts": 0,
+            "completions": 0,
+            "users": set(),
+            "users_completed": set(),
+            "user_completion_data": [],  # List of {user_id, num_attempts, num_messages}
+            "mission_model": None  # Store the model identifier for metadata lookup
+        })
+
+        # Track per-user, per-mission attempts
+        user_mission_attempts = defaultdict(lambda: defaultdict(list))  # mission_id -> user_id -> [chats]
 
         for chat in self.mission_chats:
             mission_id = chat["mission_info"]["mission_id"]
+            user_id = chat["user_id"]
+            mission_model = chat["model"]
+
             breakdown[mission_id]["attempts"] += 1
-            breakdown[mission_id]["users"].add(chat["user_id"])
+            breakdown[mission_id]["users"].add(user_id)
+            # Store the first mission_model we encounter for this mission
+            if breakdown[mission_id]["mission_model"] is None:
+                breakdown[mission_id]["mission_model"] = mission_model
+            user_mission_attempts[mission_id][user_id].append(chat)
+
             if chat["completed"]:
                 breakdown[mission_id]["completions"] += 1
+                breakdown[mission_id]["users_completed"].add(user_id)
+
+        # Calculate per-user completion metrics
+        for mission_id, user_chats_map in user_mission_attempts.items():
+            for user_id, chats in user_chats_map.items():
+                # Sort chats by created_at to find first completion
+                sorted_chats = sorted(chats, key=lambda x: x.get("created_at") or 0)
+
+                # Find first completed chat
+                completed_idx = None
+                for idx, chat in enumerate(sorted_chats):
+                    if chat["completed"]:
+                        completed_idx = idx
+                        break
+
+                if completed_idx is not None:
+                    # User completed this mission
+                    # Count attempts up to and including completion
+                    num_attempts = completed_idx + 1
+                    # Count messages up to and including completion
+                    num_messages = sum(c["message_count"] for c in sorted_chats[:num_attempts])
+
+                    breakdown[mission_id]["user_completion_data"].append({
+                        "user_id": user_id,
+                        "num_attempts": num_attempts,
+                        "num_messages": num_messages
+                    })
+
+        # Get total users in system
+        total_users = len(set(item.get("user_id", "Unknown") for item in self.data if item.get("user_id") != "Unknown"))
 
         # Convert to list
         result = []
         for mission_id, stats in breakdown.items():
+            users_attempted = len(stats["users"])
+            users_completed = len(stats["users_completed"])
+            users_not_started = total_users - users_attempted
+
+            # Calculate averages for completed users
+            avg_messages_to_complete = 0.0
+            avg_attempts_to_complete = 0.0
+            if stats["user_completion_data"]:
+                avg_messages_to_complete = sum(d["num_messages"] for d in stats["user_completion_data"]) / len(stats["user_completion_data"])
+                avg_attempts_to_complete = sum(d["num_attempts"] for d in stats["user_completion_data"]) / len(stats["user_completion_data"])
+
+            # Look up mission metadata (week, difficulty, points)
+            mission_model = stats["mission_model"]
+            week = None
+            difficulty = None
+            points = None
+
+            if mission_model:
+                # Try to get week
+                week = self.week_mapping.get(mission_model)
+                if not week:
+                    primary = self._resolve_primary_identifier(mission_model)
+                    if primary:
+                        week = self.week_mapping.get(primary)
+                if not week:
+                    alias = self._resolve_alias(mission_model)
+                    if alias:
+                        week = self.week_mapping.get(alias)
+
+                # Try to get points
+                points = self.points_mapping.get(mission_model)
+                if points is None:
+                    primary = self._resolve_primary_identifier(mission_model)
+                    if primary:
+                        points = self.points_mapping.get(primary)
+                if points is None:
+                    alias = self._resolve_alias(mission_model)
+                    if alias:
+                        points = self.points_mapping.get(alias)
+
+                # Try to get difficulty
+                difficulty = self.difficulty_mapping.get(mission_model)
+                if not difficulty:
+                    primary = self._resolve_primary_identifier(mission_model)
+                    if primary:
+                        difficulty = self.difficulty_mapping.get(primary)
+                if not difficulty:
+                    alias = self._resolve_alias(mission_model)
+                    if alias:
+                        difficulty = self.difficulty_mapping.get(alias)
+
             result.append(
                 {
                     "mission": mission_id,
                     "attempts": stats["attempts"],
                     "completions": stats["completions"],
                     "success_rate": (stats["completions"] / stats["attempts"] * 100) if stats["attempts"] > 0 else 0,
-                    "unique_users": len(stats["users"]),
+                    "unique_users": users_attempted,
+                    "users_attempted": users_attempted,
+                    "users_completed": users_completed,
+                    "users_not_started": users_not_started,
+                    "avg_messages_to_complete": avg_messages_to_complete,
+                    "avg_attempts_to_complete": avg_attempts_to_complete,
+                    "week": str(week) if week else "",
+                    "difficulty": str(difficulty) if difficulty else "",
+                    "points": int(points) if points is not None else 0,
                 }
             )
 

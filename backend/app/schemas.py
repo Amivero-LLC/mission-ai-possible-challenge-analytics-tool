@@ -55,6 +55,14 @@ class MissionBreakdownEntry(BaseModel):
     completions: int = Field(..., ge=0)
     success_rate: float = Field(..., ge=0)
     unique_users: int = Field(..., ge=0)
+    users_attempted: int = Field(..., ge=0)
+    users_completed: int = Field(..., ge=0)
+    users_not_started: int = Field(..., ge=0)
+    avg_messages_to_complete: float = Field(..., ge=0)
+    avg_attempts_to_complete: float = Field(..., ge=0)
+    week: str = ""
+    difficulty: str = ""
+    points: int = Field(default=0, ge=0)
 
 
 class ChatMessage(BaseModel):

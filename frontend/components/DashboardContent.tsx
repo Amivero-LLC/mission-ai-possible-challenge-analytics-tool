@@ -855,45 +855,6 @@ export default function DashboardContent({ initialData }: Props) {
                     </table>
                   </div>
                 </section>
-
-                <section className="section">
-                  <h2 className="section-title">🎯 Mission Breakdown</h2>
-                  {dashboard.mission_breakdown.length === 0 ? (
-                    <p>No mission data available.</p>
-                  ) : (
-                    <div className="mission-grid">
-                      {dashboard.mission_breakdown.map((mission) => (
-                        <article key={mission.mission} className="mission-card">
-                          <h3>{mission.mission}</h3>
-                          <div className="mission-stats">
-                            <div className="mission-stat">
-                              <strong>Attempts:</strong> {formatNumber(mission.attempts)}
-                            </div>
-                            <div className="mission-stat">
-                              <strong>Completions:</strong> {formatNumber(mission.completions)}
-                            </div>
-                            <div className="mission-stat">
-                              <strong>Success Rate:</strong>{" "}
-                              {formatPercent(mission.success_rate)}
-                            </div>
-                            <div className="mission-stat">
-                              <strong>Unique Users:</strong>{" "}
-                              {formatNumber(mission.unique_users)}
-                            </div>
-                          </div>
-                          <div className="progress-bar">
-                            <div
-                              className="progress-fill"
-                              style={{ width: `${Math.min(mission.success_rate, 100)}%` }}
-                            >
-                              {formatPercent(mission.success_rate, 0)} Success
-                            </div>
-                          </div>
-                        </article>
-                      ))}
-                    </div>
-                  )}
-                </section>
               </>
             )}
           </div>
@@ -923,25 +884,72 @@ export default function DashboardContent({ initialData }: Props) {
                             {formatNumber(selectedMission.attempts)} completions
                           </p>
                         </header>
+                        <div className="mission-metadata">
+                          {selectedMission.week && <span className="metadata-item">Week {selectedMission.week}</span>}
+                          {selectedMission.difficulty && <span className="metadata-item">Difficulty: {selectedMission.difficulty}</span>}
+                          {selectedMission.points > 0 && <span className="metadata-item">Points: {selectedMission.points}</span>}
+                        </div>
                         <div className="mission-stats">
+                          <div className="mission-stat">
+                            <strong>Attempted:</strong>{" "}
+                            {formatNumber(selectedMission.users_attempted)}
+                          </div>
+                          <div className="mission-stat">
+                            <strong>Completed:</strong>{" "}
+                            {formatNumber(selectedMission.users_completed)}
+                          </div>
+                          <div className="mission-stat">
+                            <strong>Not Started:</strong>{" "}
+                            {formatNumber(selectedMission.users_not_started)}
+                          </div>
                           <div className="mission-stat">
                             <strong>Success Rate:</strong>{" "}
                             {formatPercent(selectedMission.success_rate)}
                           </div>
                           <div className="mission-stat">
-                            <strong>Unique Users:</strong>{" "}
-                            {formatNumber(selectedMission.unique_users)}
+                            <strong>Avg Chats to Complete:</strong>{" "}
+                            {selectedMission.avg_messages_to_complete.toFixed(1)}
+                          </div>
+                          <div className="mission-stat">
+                            <strong>Avg Attempts to Complete:</strong>{" "}
+                            {selectedMission.avg_attempts_to_complete.toFixed(1)}
                           </div>
                         </div>
                         <div className="progress-bar">
-                          <div
-                            className="progress-fill"
-                            style={{
-                              width: `${Math.min(selectedMission.success_rate, 100)}%`,
-                            }}
-                          >
-                            {formatPercent(selectedMission.success_rate, 0)} Success
-                          </div>
+                          {(() => {
+                            const totalUsers = selectedMission.users_attempted + selectedMission.users_not_started;
+                            const completedPercent = totalUsers > 0 ? (selectedMission.users_completed / totalUsers) * 100 : 0;
+                            const inProgressPercent = totalUsers > 0 ? ((selectedMission.users_attempted - selectedMission.users_completed) / totalUsers) * 100 : 0;
+
+                            return (
+                              <>
+                                {completedPercent > 0 && (
+                                  <div
+                                    className="progress-segment completed"
+                                    style={{ width: `${completedPercent}%` }}
+                                  >
+                                    {completedPercent >= 10 && (
+                                      <span className="progress-label">
+                                        {formatPercent(completedPercent, 0)} Completed
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                                {inProgressPercent > 0 && (
+                                  <div
+                                    className="progress-segment in-progress"
+                                    style={{ width: `${inProgressPercent}%` }}
+                                  >
+                                    {inProgressPercent >= 10 && (
+                                      <span className="progress-label">
+                                        {formatPercent(inProgressPercent, 0)} In Progress
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
                         </div>
                       </article>
                     </section>
@@ -1142,23 +1150,72 @@ export default function DashboardContent({ initialData }: Props) {
                         completions
                       </p>
                     </header>
+                    <div className="mission-metadata">
+                      {mission.week && <span className="metadata-item">Week {mission.week}</span>}
+                      {mission.difficulty && <span className="metadata-item">Difficulty: {mission.difficulty}</span>}
+                      {mission.points > 0 && <span className="metadata-item">Points: {mission.points}</span>}
+                    </div>
                     <div className="mission-stats">
+                      <div className="mission-stat">
+                        <strong>Attempted:</strong>{" "}
+                        {formatNumber(mission.users_attempted)}
+                      </div>
+                      <div className="mission-stat">
+                        <strong>Completed:</strong>{" "}
+                        {formatNumber(mission.users_completed)}
+                      </div>
+                      <div className="mission-stat">
+                        <strong>Not Started:</strong>{" "}
+                        {formatNumber(mission.users_not_started)}
+                      </div>
                       <div className="mission-stat">
                         <strong>Success Rate:</strong>{" "}
                         {formatPercent(mission.success_rate)}
                       </div>
                       <div className="mission-stat">
-                        <strong>Unique Users:</strong>{" "}
-                        {formatNumber(mission.unique_users)}
+                        <strong>Avg Chats to Complete:</strong>{" "}
+                        {mission.avg_messages_to_complete.toFixed(1)}
+                      </div>
+                      <div className="mission-stat">
+                        <strong>Avg Attempts to Complete:</strong>{" "}
+                        {mission.avg_attempts_to_complete.toFixed(1)}
                       </div>
                     </div>
                     <div className="progress-bar">
-                      <div
-                        className="progress-fill"
-                        style={{ width: `${Math.min(mission.success_rate, 100)}%` }}
-                      >
-                        {formatPercent(mission.success_rate, 0)} Success
-                      </div>
+                      {(() => {
+                        const totalUsers = mission.users_attempted + mission.users_not_started;
+                        const completedPercent = totalUsers > 0 ? (mission.users_completed / totalUsers) * 100 : 0;
+                        const inProgressPercent = totalUsers > 0 ? ((mission.users_attempted - mission.users_completed) / totalUsers) * 100 : 0;
+
+                        return (
+                          <>
+                            {completedPercent > 0 && (
+                              <div
+                                className="progress-segment completed"
+                                style={{ width: `${completedPercent}%` }}
+                              >
+                                {completedPercent >= 10 && (
+                                  <span className="progress-label">
+                                    {formatPercent(completedPercent, 0)} Completed
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            {inProgressPercent > 0 && (
+                              <div
+                                className="progress-segment in-progress"
+                                style={{ width: `${inProgressPercent}%` }}
+                              >
+                                {inProgressPercent >= 10 && (
+                                  <span className="progress-label">
+                                    {formatPercent(inProgressPercent, 0)} In Progress
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   </article>
                 ))

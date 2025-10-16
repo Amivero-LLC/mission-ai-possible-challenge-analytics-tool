@@ -581,6 +581,14 @@ def _decorate_mission_breakdown(mission_breakdown: List[dict]) -> List[MissionBr
             completions=item["completions"],
             success_rate=item["success_rate"],
             unique_users=item["unique_users"],
+            users_attempted=item["users_attempted"],
+            users_completed=item["users_completed"],
+            users_not_started=item["users_not_started"],
+            avg_messages_to_complete=item["avg_messages_to_complete"],
+            avg_attempts_to_complete=item["avg_attempts_to_complete"],
+            week=item["week"],
+            difficulty=item["difficulty"],
+            points=item["points"],
         )
         for item in mission_breakdown
     ]
@@ -810,6 +818,7 @@ def build_dashboard_response(
             model_alias_to_primary=alias_to_primary,
             week_mapping=week_mapping,
             points_mapping=points_mapping,
+            difficulty_mapping=difficulty_mapping,
             verbose=False,
         )
     else:
@@ -827,6 +836,7 @@ def build_dashboard_response(
             model_alias_to_primary=alias_to_primary,
             week_mapping=week_mapping,
             points_mapping=points_mapping,
+            difficulty_mapping=difficulty_mapping,
             verbose=False,
         )
 

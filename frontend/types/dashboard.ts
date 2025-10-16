@@ -55,6 +55,14 @@ export interface MissionBreakdownEntry {
   completions: number;
   success_rate: number;
   unique_users: number;
+  users_attempted: number;
+  users_completed: number;
+  users_not_started: number;
+  avg_messages_to_complete: number;
+  avg_attempts_to_complete: number;
+  week: string;
+  difficulty: string;
+  points: number;
 }
 
 export interface ChatMessage {
