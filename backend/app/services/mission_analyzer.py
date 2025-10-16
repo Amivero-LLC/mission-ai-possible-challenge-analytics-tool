@@ -577,7 +577,9 @@ class MissionAnalyzer:
                     continue
                 if filter_user and user_id != filter_user:
                     continue
-                if filter_status:
+                # Skip status filtering for "not_attempted" - we need all mission chats
+                # to determine who has NOT attempted in get_challenge_results()
+                if filter_status and filter_status.lower() != "not_attempted":
                     if filter_status.lower() == "completed" and not completed:
                         continue
                     elif filter_status.lower() == "attempted" and completed:
@@ -881,12 +883,14 @@ class MissionAnalyzer:
         result.sort(key=lambda x: x["attempts"], reverse=True)
         return result
 
-    def get_challenge_results(self, filter_challenge=None):
+    def get_challenge_results(self, filter_challenge=None, filter_status=None):
         """
         Generate per-user challenge results when a specific challenge filter is active.
 
         Args:
             filter_challenge (str | None): The specific challenge to analyze. Returns empty list if None.
+            filter_status (str | None): Filter by completion status. Options: "completed", "attempted",
+                "not_attempted" to show only users with that status.
 
         Returns:
             list[dict]: Per-user challenge statistics including:
@@ -905,6 +909,7 @@ class MissionAnalyzer:
             - Total message count across all conversations before completion
             - Completion timestamp from the message that triggered success
             - Returns entries for ALL users in the system, regardless of participation
+            - When filter_status is provided, only users matching that status are returned
         """
         if not filter_challenge:
             return []
@@ -1019,6 +1024,15 @@ class MissionAnalyzer:
                 "completed_time": completed_time,
                 "num_messages": num_messages,
             })
+
+        # Apply status filter if specified
+        if filter_status:
+            if filter_status.lower() == "completed":
+                results = [r for r in results if r["status"] == "Completed"]
+            elif filter_status.lower() == "attempted":
+                results = [r for r in results if r["status"] == "Attempted"]
+            elif filter_status.lower() == "not_attempted":
+                results = [r for r in results if r["status"] == ""]
 
         # Sort by status (Completed first, then Attempted, then no attempt), then by completion time / first attempt time
         results.sort(

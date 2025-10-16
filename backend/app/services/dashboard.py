@@ -850,7 +850,7 @@ def build_dashboard_response(
         model_lookup=model_lookup,
     )
     challenge_results = _decorate_challenge_results(
-        analyzer.get_challenge_results(filter_challenge=filter_challenge)
+        analyzer.get_challenge_results(filter_challenge=filter_challenge, filter_status=filter_status)
     )
 
     # Generate export data (all user/challenge combinations)

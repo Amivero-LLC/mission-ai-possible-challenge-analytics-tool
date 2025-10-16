@@ -673,6 +673,7 @@ export default function DashboardContent({ initialData }: Props) {
             <option value="">All</option>
             <option value="completed">Completed</option>
             <option value="attempted">In Progress</option>
+            <option value="not_attempted">Not Started</option>
           </select>
         </div>
         <div className="filter-group">
