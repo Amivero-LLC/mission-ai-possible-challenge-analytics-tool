@@ -44,9 +44,11 @@ class MissionAnalyzer:
         model_lookup=None,
         mission_model_aliases=None,
         model_alias_to_primary=None,
+        week_mapping=None,
+        points_mapping=None,
     ):
         """
-        Initialize the analyzer with either a file path or an in-memory dataset.
+        Initialize the analyzer with either a file path or an-memory dataset.
 
         Args:
             json_file (str | pathlib.Path | None): Path to an OpenWebUI chat export.
@@ -67,6 +69,10 @@ class MissionAnalyzer:
                 detection when omitted.
             model_alias_to_primary (dict[str, str] | None): Mapping of model aliases
                 to canonical identifiers (typically slugs) preserved in OpenWebUI.
+            week_mapping (dict[str, str] | None): Mapping of model aliases to
+                maip_week values extracted from custom_params.
+            points_mapping (dict[str, int] | None): Mapping of model aliases to
+                maip_points_value (int) for calculating total points earned.
 
         Raises:
             ValueError: If both ``json_file`` and ``data`` are omitted, the class
@@ -100,12 +106,15 @@ class MissionAnalyzer:
         self.mission_model_aliases_lower = {
             alias.lower(): alias for alias in self.mission_model_aliases
         }
+        self.week_mapping = {str(alias): str(week) for alias, week in (week_mapping or {}).items()}
+        self.points_mapping = {str(alias): int(pts) for alias, pts in (points_mapping or {}).items()}
         # Tracks per-user aggregates used to build leaderboard and summaries.
         self.user_stats = defaultdict(
             lambda: {
                 "user_id": "",
                 "missions_attempted": [],
                 "missions_completed": [],
+                "completed_mission_models": [],  # Track models of completed missions for points
                 "total_attempts": 0,
                 "total_completions": 0,
                 "total_messages": 0,
@@ -140,6 +149,7 @@ class MissionAnalyzer:
             "you succeeded",
             "you win",
             "you got it",
+            "MISSION_CODE:314-GHOST",
         ]
 
         if user_names:
@@ -464,7 +474,7 @@ class MissionAnalyzer:
                     return True
         return False
 
-    def analyze_missions(self, filter_challenge=None, filter_user=None, filter_status=None, filter_date_from=None, filter_date_to=None):
+    def analyze_missions(self, filter_challenge=None, filter_user=None, filter_status=None, filter_week=None):
         """
         Inspect chats and populate mission-related aggregates.
 
@@ -474,10 +484,9 @@ class MissionAnalyzer:
             filter_user (str | None): Restrict analysis to chats by the given
                 ``user_id``. Useful for per-participant reports.
             filter_status (str | None): Restrict analysis based on completion status.
-                Options: "completed" (only completed missions) or "attempted" 
+                Options: "completed" (only completed missions) or "attempted"
                 (only incomplete attempts). ``None`` keeps all statuses.
-            filter_date_from (str | None): Filter chats created on or after this date (ISO format).
-            filter_date_to (str | None): Filter chats created on or before this date (ISO format).
+            filter_week (str | None): Filter missions by their maip_week value. ``None`` keeps all weeks.
 
         Returns:
             int: Count of mission-attempt chats that satisfied the filters.
@@ -489,7 +498,7 @@ class MissionAnalyzer:
               ``get_leaderboard`` and ``get_summary`` use fresh aggregates.
 
         Example:
-            >>> analyzer.analyze_missions(filter_status="completed", filter_date_from="2025-01-01")
+            >>> analyzer.analyze_missions(filter_status="completed", filter_week="1")
             4
 
         Notes:
@@ -498,23 +507,6 @@ class MissionAnalyzer:
             handle exports where model attribution differs.
         """
         self.mission_chats = []
-
-        # Parse date filters if provided
-        date_from_ts = None
-        date_to_ts = None
-        if filter_date_from:
-            try:
-                from datetime import datetime as dt
-                date_from_ts = int(dt.fromisoformat(filter_date_from).timestamp())
-            except (ValueError, AttributeError):
-                pass
-        if filter_date_to:
-            try:
-                from datetime import datetime as dt
-                # Add 23:59:59 to include the entire day
-                date_to_ts = int(dt.fromisoformat(filter_date_to + "T23:59:59").timestamp())
-            except (ValueError, AttributeError):
-                pass
 
         for i, item in enumerate(self.data, 1):
             chat = item.get("chat", {})
@@ -575,6 +567,7 @@ class MissionAnalyzer:
                 user_id = item.get("user_id", "Unknown")
                 title = item.get("title", "Untitled")
                 created_at = item.get("created_at")
+                updated_at = item.get("updated_at")
 
                 # Check if completed
                 completed = self.check_success(messages)
@@ -589,15 +582,35 @@ class MissionAnalyzer:
                         continue
                     elif filter_status.lower() == "attempted" and completed:
                         continue
-                
-                # Apply date filter
-                if date_from_ts or date_to_ts:
-                    chat_timestamp = created_at if isinstance(created_at, (int, float)) else None
-                    if chat_timestamp:
-                        if date_from_ts and chat_timestamp < date_from_ts:
-                            continue
-                        if date_to_ts and chat_timestamp > date_to_ts:
-                            continue
+
+                # Apply week filter - check if this mission model has a week value that matches
+                if filter_week:
+                    # Get the week value for this mission model - try multiple identifier variations
+                    model_week = self.week_mapping.get(mission_model)
+
+                    # Try the primary identifier
+                    if not model_week:
+                        primary = self._resolve_primary_identifier(mission_model)
+                        if primary:
+                            model_week = self.week_mapping.get(primary)
+
+                    # Try the resolved alias
+                    if not model_week:
+                        alias = self._resolve_alias(mission_model)
+                        if alias:
+                            model_week = self.week_mapping.get(alias)
+
+                    # Try lowercase variation
+                    if not model_week:
+                        model_lower = str(mission_model).lower()
+                        for key, val in self.week_mapping.items():
+                            if key.lower() == model_lower:
+                                model_week = val
+                                break
+
+                    # Filter out missions that don't match the requested week
+                    if not model_week or str(model_week) != str(filter_week):
+                        continue
 
                 mission_data = {
                     "chat_num": i,
@@ -621,11 +634,31 @@ class MissionAnalyzer:
 
                 if completed:
                     self.user_stats[user_id]["missions_completed"].append(mission_info["mission_id"])
+                    self.user_stats[user_id]["completed_mission_models"].append(mission_model)
                     self.user_stats[user_id]["total_completions"] += 1
 
+                # Track first and most recent conversation activity
                 if not self.user_stats[user_id]["first_attempt"]:
                     self.user_stats[user_id]["first_attempt"] = created_at
-                self.user_stats[user_id]["last_attempt"] = created_at
+
+                # Use updated_at to track the most recent conversation activity for this user
+                # Compare and keep the most recent timestamp across all their conversations
+                current_last = self.user_stats[user_id]["last_attempt"]
+                conversation_updated_at = updated_at or created_at  # Fallback to created_at if updated_at not present
+
+                if current_last is None:
+                    self.user_stats[user_id]["last_attempt"] = conversation_updated_at
+                else:
+                    # Keep the most recent timestamp
+                    # Handle both numeric (Unix timestamps) and string (ISO) timestamps
+                    try:
+                        current_val = float(current_last) if isinstance(current_last, (int, float)) else 0
+                        new_val = float(conversation_updated_at) if isinstance(conversation_updated_at, (int, float)) else 0
+                        if new_val > current_val:
+                            self.user_stats[user_id]["last_attempt"] = conversation_updated_at
+                    except (ValueError, TypeError):
+                        # If comparison fails, just use the new value
+                        self.user_stats[user_id]["last_attempt"] = conversation_updated_at
 
         return len(self.mission_chats)
 
@@ -659,6 +692,35 @@ class MissionAnalyzer:
                 stats["total_completions"] / stats["total_attempts"] * 100 if stats["total_attempts"] > 0 else 0
             )
 
+            # Calculate total points from completed missions
+            total_points = 0
+            for mission_model in stats["completed_mission_models"]:
+                # Try to get points for this model using various lookups
+                points = self.points_mapping.get(mission_model)
+
+                # Try the primary identifier
+                if points is None:
+                    primary = self._resolve_primary_identifier(mission_model)
+                    if primary:
+                        points = self.points_mapping.get(primary)
+
+                # Try the resolved alias
+                if points is None:
+                    alias = self._resolve_alias(mission_model)
+                    if alias:
+                        points = self.points_mapping.get(alias)
+
+                # Try lowercase variation
+                if points is None:
+                    model_lower = str(mission_model).lower()
+                    for key, val in self.points_mapping.items():
+                        if key.lower() == model_lower:
+                            points = val
+                            break
+
+                if points is not None:
+                    total_points += points
+
             leaderboard.append(
                 {
                     "user_id": user_id,
@@ -670,6 +732,7 @@ class MissionAnalyzer:
                     "unique_missions_completed": len(set(stats["missions_completed"])),
                     "first_attempt": stats["first_attempt"],
                     "last_attempt": stats["last_attempt"],
+                    "total_points": total_points,
                 }
             )
 
@@ -789,6 +852,155 @@ class MissionAnalyzer:
 
         result.sort(key=lambda x: x["attempts"], reverse=True)
         return result
+
+    def get_challenge_results(self, filter_challenge=None):
+        """
+        Generate per-user challenge results when a specific challenge filter is active.
+
+        Args:
+            filter_challenge (str | None): The specific challenge to analyze. Returns empty list if None.
+
+        Returns:
+            list[dict]: Per-user challenge statistics including:
+                - user_id: User identifier
+                - user_name: Display name
+                - status: "Completed", "Attempted", or empty string if no attempts
+                - num_attempts: Number of conversation attempts before first completion
+                - first_attempt_time: Timestamp of first message with mission model
+                - completed_time: Timestamp when mission was completed (None if not completed)
+                - num_messages: Total messages sent before completion
+
+        Notes:
+            This method analyzes all conversations for the specified challenge and tracks:
+            - First message timestamp as the "first attempt"
+            - Number of distinct conversations as "attempts"
+            - Total message count across all conversations before completion
+            - Completion timestamp from the message that triggered success
+            - Returns entries for ALL users in the system, regardless of participation
+        """
+        if not filter_challenge:
+            return []
+
+        # Track per-user challenge participation
+        user_challenge_data = defaultdict(lambda: {
+            "user_id": "",
+            "user_name": "",
+            "conversations": [],  # List of conversation metadata
+            "completed": False,
+            "completion_time": None,
+            "completion_message_index": None,
+        })
+
+        # First pass: collect all users from the entire dataset
+        all_users = set()
+        for item in self.data:
+            user_id = item.get("user_id", "Unknown")
+            if user_id and user_id != "Unknown":
+                all_users.add(user_id)
+
+        # Initialize all users in the challenge data
+        for user_id in all_users:
+            user_challenge_data[user_id]["user_id"] = user_id
+            user_challenge_data[user_id]["user_name"] = self.get_user_name(user_id)
+
+        # Second pass: collect all conversations for this challenge
+        for chat in self.mission_chats:
+            user_id = chat["user_id"]
+            mission_model = chat["model"]
+
+            # Check if this chat matches the challenge filter
+            if not self._mission_matches_filter(mission_model, filter_challenge):
+                continue
+
+            # Store conversation metadata
+            conv_data = {
+                "created_at": chat["created_at"],
+                "message_count": chat["message_count"],
+                "completed": chat["completed"],
+                "messages": chat["messages"],
+            }
+            user_challenge_data[user_id]["conversations"].append(conv_data)
+
+            # Track completion
+            if chat["completed"] and not user_challenge_data[user_id]["completed"]:
+                user_challenge_data[user_id]["completed"] = True
+                # Find the exact message that triggered success
+                for idx, msg in enumerate(chat["messages"]):
+                    if msg.get("role") == "assistant":
+                        content = msg.get("content", "").lower()
+                        if any(keyword in content for keyword in self.success_keywords):
+                            user_challenge_data[user_id]["completion_time"] = chat["created_at"]
+                            user_challenge_data[user_id]["completion_message_index"] = idx
+                            break
+
+        # Third pass: calculate metrics for each user
+        results = []
+        for user_id, data in user_challenge_data.items():
+            # Sort conversations by timestamp
+            conversations = sorted(data["conversations"], key=lambda x: x["created_at"] or 0)
+
+            if not conversations:
+                # User hasn't attempted this challenge
+                results.append({
+                    "user_id": user_id,
+                    "user_name": data["user_name"],
+                    "status": "",
+                    "num_attempts": 0,
+                    "first_attempt_time": None,
+                    "completed_time": None,
+                    "num_messages": 0,
+                })
+                continue
+
+            # First attempt time (from first conversation's timestamp)
+            first_attempt_time = conversations[0]["created_at"]
+
+            # Calculate metrics based on completion status
+            if data["completed"]:
+                # Find which conversation led to completion
+                completion_conv_index = 0
+                for idx, conv in enumerate(conversations):
+                    if conv["completed"]:
+                        completion_conv_index = idx
+                        break
+
+                # Count attempts (conversations before + including completion)
+                num_attempts = completion_conv_index + 1
+
+                # Count total messages before completion
+                num_messages = sum(
+                    conv["message_count"]
+                    for conv in conversations[:num_attempts]
+                )
+
+                status = "Completed"
+                completed_time = data["completion_time"]
+            else:
+                # Not completed yet
+                num_attempts = len(conversations)
+                num_messages = sum(conv["message_count"] for conv in conversations)
+                status = "Attempted"
+                completed_time = None
+
+            results.append({
+                "user_id": user_id,
+                "user_name": data["user_name"],
+                "status": status,
+                "num_attempts": num_attempts,
+                "first_attempt_time": first_attempt_time,
+                "completed_time": completed_time,
+                "num_messages": num_messages,
+            })
+
+        # Sort by status (Completed first, then Attempted, then no attempt), then by completion time / first attempt time
+        results.sort(
+            key=lambda x: (
+                0 if x["status"] == "Completed" else (1 if x["status"] == "Attempted" else 2),
+                -(x["completed_time"] or 0) if x["status"] == "Completed" else -(x["first_attempt_time"] or 0)
+            )
+        )
+
+        return results
 
 
 def find_latest_export():

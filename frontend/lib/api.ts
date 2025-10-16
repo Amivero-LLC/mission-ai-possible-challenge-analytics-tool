@@ -8,8 +8,7 @@ import type { DashboardResponse, SortOption } from "../types/dashboard";
  */
 export interface DashboardQuery {
   sort_by?: SortOption;
-  date_from?: string;
-  date_to?: string;
+  week?: string;
   challenge?: string;
   user_id?: string;
   status?: string;
@@ -65,13 +64,12 @@ export async function fetchDashboard(
   const params = new URLSearchParams();
 
   if (query.sort_by) params.set("sort_by", query.sort_by);
-  if (query.date_from) params.set("date_from", query.date_from);
-  if (query.date_to) params.set("date_to", query.date_to);
+  if (query.week) params.set("week", query.week);
   if (query.challenge) params.set("challenge", query.challenge);
   if (query.user_id) params.set("user_id", query.user_id);
   if (query.status) params.set("status", query.status);
 
-  if ([...params.keys()].length > 0) {
+  if (params.size > 0) {
     url.search = params.toString();
   }
 

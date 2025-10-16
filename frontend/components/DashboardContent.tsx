@@ -1,16 +1,14 @@
 'use client';
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import * as XLSX from "xlsx";
 import { fetchDashboard } from "../lib/api";
 import type { DashboardResponse, SortOption } from "../types/dashboard";
 
-type TabKey = "overview" | "allchats" | "missions" | "models";
+type TabKey = "overview" | "challengeresults" | "allchats" | "missions";
 
 type FilterState = {
-  sortBy: SortOption;
-  dateFrom: string;
-  dateTo: string;
+  week: string;
   challenge: string;
   user: string;
   status: string;
@@ -21,15 +19,13 @@ type FilterState = {
  */
 const tabs: Array<{ id: TabKey; label: string }> = [
   { id: "overview", label: "📊 Overview" },
+  { id: "challengeresults", label: "🏅 Challenge Results" },
   { id: "allchats", label: "💬 All Chats" },
   { id: "missions", label: "🎯 Missions" },
-  { id: "models", label: "🤖 Models" },
 ];
 
 const defaultFilters: FilterState = {
-  sortBy: "completions",
-  dateFrom: "",
-  dateTo: "",
+  week: "",
   challenge: "",
   user: "",
   status: "",
@@ -169,6 +165,21 @@ export default function DashboardContent({ initialData }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Challenge Results sorting state
+  type ChallengeResultSortKey = "user_name" | "status" | "num_attempts" | "first_attempt_time" | "completed_time" | "num_messages";
+  const [challengeResultSortKey, setChallengeResultSortKey] = useState<ChallengeResultSortKey>("status");
+  const [challengeResultSortAsc, setChallengeResultSortAsc] = useState(true);
+
+  // Leaderboard sorting state
+  type LeaderboardSortKey = "user_name" | "completions" | "attempts" | "efficiency" | "total_messages" | "last_attempt" | "unique_missions_completed" | "unique_missions_attempted" | "total_points";
+  const [leaderboardSortKey, setLeaderboardSortKey] = useState<LeaderboardSortKey>("completions");
+  const [leaderboardSortAsc, setLeaderboardSortAsc] = useState(false);
+
+  // All Chats sorting state
+  type AllChatsSortKey = "num" | "title" | "user_name" | "model" | "created_at" | "message_count" | "is_mission";
+  const [allChatsSortKey, setAllChatsSortKey] = useState<AllChatsSortKey>("num");
+  const [allChatsSortAsc, setAllChatsSortAsc] = useState(false);
+
   const handleFiltersChange = (key: keyof FilterState, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
   };
@@ -184,7 +195,7 @@ export default function DashboardContent({ initialData }: Props) {
     setError(null);
     setLoading(true);
     try {
-      const data = await fetchDashboard({ sort_by: defaultFilters.sortBy });
+      const data = await fetchDashboard({ sort_by: "completions" });
       setDashboard(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to refresh dashboard.");
@@ -205,9 +216,8 @@ export default function DashboardContent({ initialData }: Props) {
     setLoading(true);
     try {
       const data = await fetchDashboard({
-        sort_by: filters.sortBy,
-        date_from: filters.dateFrom || undefined,
-        date_to: filters.dateTo || undefined,
+        sort_by: "completions",
+        week: filters.week || undefined,
         challenge: filters.challenge || undefined,
         user_id: filters.user || undefined,
         status: filters.status || undefined,
@@ -221,72 +231,35 @@ export default function DashboardContent({ initialData }: Props) {
   }, [filters]);
 
   /**
+   * Automatically apply filters when filter state changes.
+   */
+  useEffect(() => {
+    applyFilters();
+  }, [applyFilters]);
+
+  /**
    * Export current tab data to CSV format
    */
   const exportToCSV = useCallback(() => {
-    let data: any[] = [];
-    let filename = "";
-
-    switch (activeTab) {
-      case "overview":
-        // Export leaderboard data
-        data = dashboard.leaderboard.map((entry, index) => ({
-          Rank: index + 1,
-          "User Name": entry.user_name,
-          Completions: entry.completions,
-          Attempts: entry.attempts,
-          "Success Rate": `${entry.efficiency.toFixed(1)}%`,
-          Messages: entry.total_messages,
-          "Last Activity": formatChatTimestamp(entry.last_attempt),
-          "Unique Missions Completed": entry.unique_missions_completed,
-          "Unique Missions Attempted": entry.unique_missions_attempted,
-        }));
-        filename = "leaderboard.csv";
-        break;
-
-      case "allchats":
-        // Export all chats data
-        data = dashboard.all_chats.map((chat) => ({
-          "#": chat.num,
-          Title: chat.title,
-          "User Name": chat.user_name,
-          Model: chat.model,
-          "Created At": formatChatTimestamp(chat.created_at),
-          Messages: chat.message_count,
-          Mission: chat.is_mission ? (chat.completed ? "Mission ✓" : "Mission") : "Regular",
-        }));
-        filename = "all_chats.csv";
-        break;
-
-      case "missions":
-        // Export missions data
-        data = dashboard.mission_breakdown.map((mission) => ({
-          Mission: mission.mission,
-          Attempts: mission.attempts,
-          Completions: mission.completions,
-          "Success Rate": `${mission.success_rate.toFixed(1)}%`,
-          "Unique Users": mission.unique_users,
-        }));
-        filename = "missions.csv";
-        break;
-
-      case "models":
-        // Export models data
-        data = dashboard.model_stats.map((model) => ({
-          Model: model.model,
-          "Total Chats": model.total,
-          "Mission Chats": model.mission,
-          "Completed Missions": model.completed,
-          "Mission %": `${model.mission_percentage.toFixed(1)}%`,
-        }));
-        filename = "models.csv";
-        break;
-    }
+    // Use the new export_data format for all exports
+    const data = dashboard.export_data.map((row) => ({
+      "Name": row.user_name,
+      "Email": row.email,
+      "Challenge Name": row.challenge_name,
+      "Status": row.status,
+      "Completed": row.completed,
+      "Number of Attempts": row.num_attempts,
+      "Number of Messages": row.num_messages,
+      "Week": row.week,
+      "DateTime Started": row.datetime_started || "",
+      "DateTime Completed": row.datetime_completed || "",
+      "Points Earned": row.points_earned,
+    }));
 
     if (data.length === 0) return;
 
     // Convert to CSV
-    const headers = Object.keys(data[0]);
+    const headers = Object.keys(data[0]) as Array<keyof typeof data[0]>;
     const csvContent = [
       headers.join(","),
       ...data.map((row) =>
@@ -305,90 +278,291 @@ export default function DashboardContent({ initialData }: Props) {
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = filename;
+    link.download = "user_challenge_export.csv";
     link.click();
     URL.revokeObjectURL(link.href);
-  }, [activeTab, dashboard]);
+  }, [dashboard]);
 
   /**
    * Export current tab data to Excel format
    */
   const exportToExcel = useCallback(() => {
-    let data: any[] = [];
-    let sheetName = "";
-    let filename = "";
-
-    switch (activeTab) {
-      case "overview":
-        data = dashboard.leaderboard.map((entry, index) => ({
-          Rank: index + 1,
-          "User Name": entry.user_name,
-          Completions: entry.completions,
-          Attempts: entry.attempts,
-          "Success Rate (%)": Number(entry.efficiency.toFixed(1)),
-          Messages: entry.total_messages,
-          "Last Activity": formatChatTimestamp(entry.last_attempt),
-          "Unique Missions Completed": entry.unique_missions_completed,
-          "Unique Missions Attempted": entry.unique_missions_attempted,
-        }));
-        sheetName = "Leaderboard";
-        filename = "leaderboard.xlsx";
-        break;
-
-      case "allchats":
-        data = dashboard.all_chats.map((chat) => ({
-          "#": chat.num,
-          Title: chat.title,
-          "User Name": chat.user_name,
-          Model: chat.model,
-          "Created At": formatChatTimestamp(chat.created_at),
-          Messages: chat.message_count,
-          Mission: chat.is_mission ? (chat.completed ? "Mission ✓" : "Mission") : "Regular",
-        }));
-        sheetName = "All Chats";
-        filename = "all_chats.xlsx";
-        break;
-
-      case "missions":
-        data = dashboard.mission_breakdown.map((mission) => ({
-          Mission: mission.mission,
-          Attempts: mission.attempts,
-          Completions: mission.completions,
-          "Success Rate (%)": Number(mission.success_rate.toFixed(1)),
-          "Unique Users": mission.unique_users,
-        }));
-        sheetName = "Missions";
-        filename = "missions.xlsx";
-        break;
-
-      case "models":
-        data = dashboard.model_stats.map((model) => ({
-          Model: model.model,
-          "Total Chats": model.total,
-          "Mission Chats": model.mission,
-          "Completed Missions": model.completed,
-          "Mission %": Number(model.mission_percentage.toFixed(1)),
-        }));
-        sheetName = "Models";
-        filename = "models.xlsx";
-        break;
-    }
+    // Use the new export_data format for all exports
+    const data = dashboard.export_data.map((row) => ({
+      "Name": row.user_name,
+      "Email": row.email,
+      "Challenge Name": row.challenge_name,
+      "Status": row.status,
+      "Completed": row.completed,
+      "Number of Attempts": row.num_attempts,
+      "Number of Messages": row.num_messages,
+      "Week": row.week,
+      "DateTime Started": row.datetime_started || "",
+      "DateTime Completed": row.datetime_completed || "",
+      "Points Earned": row.points_earned,
+    }));
 
     if (data.length === 0) return;
 
     // Create workbook and worksheet
     const worksheet = XLSX.utils.json_to_sheet(data);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+    XLSX.utils.book_append_sheet(workbook, worksheet, "User Challenge Export");
 
     // Download
-    XLSX.writeFile(workbook, filename);
-  }, [activeTab, dashboard]);
+    XLSX.writeFile(workbook, "user_challenge_export.xlsx");
+  }, [dashboard]);
+
+  /**
+   * Sort challenge results based on the current sort key and direction
+   */
+  const sortedChallengeResults = useCallback(() => {
+    if (!dashboard.challenge_results || dashboard.challenge_results.length === 0) {
+      return [];
+    }
+
+    const results = [...dashboard.challenge_results];
+
+    results.sort((a, b) => {
+      let aVal: any = a[challengeResultSortKey];
+      let bVal: any = b[challengeResultSortKey];
+
+      // Handle null/undefined values
+      if (aVal === null || aVal === undefined) aVal = "";
+      if (bVal === null || bVal === undefined) bVal = "";
+
+      // For timestamps, convert to numbers for proper sorting
+      if (challengeResultSortKey === "first_attempt_time" || challengeResultSortKey === "completed_time") {
+        aVal = typeof aVal === "number" ? aVal : (aVal ? new Date(aVal).getTime() : 0);
+        bVal = typeof bVal === "number" ? bVal : (bVal ? new Date(bVal).getTime() : 0);
+      }
+
+      // For strings, use locale compare
+      if (typeof aVal === "string" && typeof bVal === "string") {
+        return challengeResultSortAsc
+          ? aVal.localeCompare(bVal)
+          : bVal.localeCompare(aVal);
+      }
+
+      // For numbers
+      return challengeResultSortAsc ? aVal - bVal : bVal - aVal;
+    });
+
+    return results;
+  }, [dashboard.challenge_results, challengeResultSortKey, challengeResultSortAsc]);
+
+  /**
+   * Handle column header click for sorting
+   */
+  const handleChallengeResultSort = (key: ChallengeResultSortKey) => {
+    if (challengeResultSortKey === key) {
+      // Toggle direction if clicking the same column
+      setChallengeResultSortAsc(!challengeResultSortAsc);
+    } else {
+      // Set new sort key and default to ascending
+      setChallengeResultSortKey(key);
+      setChallengeResultSortAsc(true);
+    }
+  };
+
+  /**
+   * Sort leaderboard based on the current sort key and direction
+   */
+  const sortedLeaderboard = useCallback(() => {
+    if (!dashboard.leaderboard || dashboard.leaderboard.length === 0) {
+      return [];
+    }
+
+    const leaderboard = [...dashboard.leaderboard];
+
+    leaderboard.sort((a, b) => {
+      let aVal: any = a[leaderboardSortKey];
+      let bVal: any = b[leaderboardSortKey];
+
+      // Handle null/undefined values
+      if (aVal === null || aVal === undefined) aVal = "";
+      if (bVal === null || bVal === undefined) bVal = "";
+
+      // For timestamps, convert to numbers for proper sorting
+      if (leaderboardSortKey === "last_attempt") {
+        aVal = typeof aVal === "number" ? aVal : (aVal ? new Date(aVal).getTime() : 0);
+        bVal = typeof bVal === "number" ? bVal : (bVal ? new Date(bVal).getTime() : 0);
+      }
+
+      // For strings, use locale compare
+      if (typeof aVal === "string" && typeof bVal === "string") {
+        return leaderboardSortAsc
+          ? aVal.localeCompare(bVal)
+          : bVal.localeCompare(aVal);
+      }
+
+      // For numbers
+      return leaderboardSortAsc ? aVal - bVal : bVal - aVal;
+    });
+
+    return leaderboard;
+  }, [dashboard.leaderboard, leaderboardSortKey, leaderboardSortAsc]);
+
+  /**
+   * Handle column header click for leaderboard sorting
+   */
+  const handleLeaderboardSort = (key: LeaderboardSortKey) => {
+    if (leaderboardSortKey === key) {
+      // Toggle direction if clicking the same column
+      setLeaderboardSortAsc(!leaderboardSortAsc);
+    } else {
+      // Set new sort key and default to ascending
+      setLeaderboardSortKey(key);
+      setLeaderboardSortAsc(true);
+    }
+  };
+
+  /**
+   * Sort all chats based on the current sort key and direction
+   */
+  const sortedAllChats = useCallback(() => {
+    if (!dashboard.all_chats || dashboard.all_chats.length === 0) {
+      return [];
+    }
+
+    const chats = [...dashboard.all_chats];
+
+    chats.sort((a, b) => {
+      let aVal: any;
+      let bVal: any;
+
+      // Handle special case for is_mission (mission status)
+      if (allChatsSortKey === "is_mission") {
+        aVal = a.is_mission ? (a.completed ? 2 : 1) : 0;
+        bVal = b.is_mission ? (b.completed ? 2 : 1) : 0;
+      } else {
+        aVal = a[allChatsSortKey];
+        bVal = b[allChatsSortKey];
+      }
+
+      // Handle null/undefined values
+      if (aVal === null || aVal === undefined) aVal = "";
+      if (bVal === null || bVal === undefined) bVal = "";
+
+      // For timestamps, convert to numbers for proper sorting
+      if (allChatsSortKey === "created_at") {
+        aVal = typeof aVal === "number" ? aVal : (aVal ? new Date(aVal).getTime() : 0);
+        bVal = typeof bVal === "number" ? bVal : (bVal ? new Date(bVal).getTime() : 0);
+      }
+
+      // For strings, use locale compare
+      if (typeof aVal === "string" && typeof bVal === "string") {
+        return allChatsSortAsc
+          ? aVal.localeCompare(bVal)
+          : bVal.localeCompare(aVal);
+      }
+
+      // For numbers
+      return allChatsSortAsc ? aVal - bVal : bVal - aVal;
+    });
+
+    return chats;
+  }, [dashboard.all_chats, allChatsSortKey, allChatsSortAsc]);
+
+  /**
+   * Handle column header click for all chats sorting
+   */
+  const handleAllChatsSort = (key: AllChatsSortKey) => {
+    if (allChatsSortKey === key) {
+      // Toggle direction if clicking the same column
+      setAllChatsSortAsc(!allChatsSortAsc);
+    } else {
+      // Set new sort key and default to ascending
+      setAllChatsSortKey(key);
+      setAllChatsSortAsc(true);
+    }
+  };
+
+  /**
+   * Format timestamp for Challenge Results (EST timezone)
+   */
+  const formatChallengeTimestamp = (value?: string | number | null) => {
+    if (!value) return "N/A";
+
+    // If it's a Unix timestamp (number), convert to milliseconds
+    const timestamp = typeof value === "number" ? value * 1000 : value;
+    const date = new Date(timestamp);
+
+    if (Number.isNaN(date.valueOf())) {
+      return "N/A";
+    }
+
+    // Format as MM/DD/YY HH:MM EST
+    const estFormatter = new Intl.DateTimeFormat("en-US", {
+      month: "2-digit",
+      day: "2-digit",
+      year: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "America/New_York",
+      hour12: true,
+    });
+
+    return estFormatter.format(date) + " EST";
+  };
+
+  /**
+   * Get status badge class name
+   */
+  const getStatusBadgeClass = (status: string) => {
+    switch (status) {
+      case "Completed":
+        return "badge badge-success";
+      case "Attempted":
+        return "badge badge-warning";
+      default:
+        return "badge badge-info";
+    }
+  };
 
   return (
-    <div className="dashboard-container">
+    <div className="dashboard-container" style={{ position: "relative" }}>
+      {/* Loading Overlay */}
+      {loading && (
+        <>
+          <style dangerouslySetInnerHTML={{
+            __html: `
+              @keyframes dashboardSpinner {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+              }
+            `
+          }} />
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: "rgba(0, 0, 0, 0.3)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 9999,
+            }}
+          >
+            <div
+              style={{
+                width: "60px",
+                height: "60px",
+                border: "5px solid #f3f3f3",
+                borderTop: "5px solid #3498db",
+                borderRadius: "50%",
+                animation: "dashboardSpinner 1s linear infinite",
+              }}
+            />
+          </div>
+        </>
+      )}
+
       <header className="dashboard-header">
-        <h1>Amivero's Mission: AI Possible</h1>
+        <h1>Amivero&apos;s Mission: AI Possible</h1>
         <p className="dashboard-subtitle">🎯 Mission Challenge Dashboard</p>
         <p className="dashboard-timestamp">
           Last Updated: {formatDateTime(dashboard.generated_at)}
@@ -420,37 +594,32 @@ export default function DashboardContent({ initialData }: Props) {
             {formatPercent(dashboard.summary.participation_rate)} Participation
           </p>
         </article>
-        <article className="stat-card">
-          <p className="stat-label">Models Used</p>
-          <p className="stat-value">{formatNumber(dashboard.model_stats.length)}</p>
-          <p className="stat-sublabel">Unique Models</p>
-        </article>
       </section>
 
       <section className="filters-panel">
         <div className="filter-group">
-          <label className="filter-label" htmlFor="date-from-input">
-            Date From
+          <label className="filter-label" htmlFor="week-select">
+            Select Week
           </label>
-          <input
-            id="date-from-input"
+          <select
+            id="week-select"
             className="filter-input"
-            type="date"
-            value={filters.dateFrom}
-            onChange={(event) => handleFiltersChange("dateFrom", event.target.value)}
-          />
-        </div>
-        <div className="filter-group">
-          <label className="filter-label" htmlFor="date-to-input">
-            Date To
-          </label>
-          <input
-            id="date-to-input"
-            className="filter-input"
-            type="date"
-            value={filters.dateTo}
-            onChange={(event) => handleFiltersChange("dateTo", event.target.value)}
-          />
+            value={filters.week}
+            onChange={(event) => handleFiltersChange("week", event.target.value)}
+            disabled={loading}
+          >
+            <option value="">All Weeks</option>
+            <option value="1">Week 1</option>
+            <option value="2">Week 2</option>
+            <option value="3">Week 3</option>
+            <option value="4">Week 4</option>
+            <option value="5">Week 5</option>
+            <option value="6">Week 6</option>
+            <option value="7">Week 7</option>
+            <option value="8">Week 8</option>
+            <option value="9">Week 9</option>
+            <option value="10">Week 10</option>
+          </select>
         </div>
         <div className="filter-group">
           <label className="filter-label" htmlFor="challenge-select">
@@ -461,6 +630,7 @@ export default function DashboardContent({ initialData }: Props) {
             className="filter-input"
             value={filters.challenge}
             onChange={(event) => handleFiltersChange("challenge", event.target.value)}
+            disabled={loading}
           >
             <option value="">All Challenges</option>
             {(dashboard.summary.missions_list || []).map((mission) => (
@@ -479,6 +649,7 @@ export default function DashboardContent({ initialData }: Props) {
             className="filter-input"
             value={filters.status}
             onChange={(event) => handleFiltersChange("status", event.target.value)}
+            disabled={loading}
           >
             <option value="">All</option>
             <option value="completed">Completed</option>
@@ -494,6 +665,7 @@ export default function DashboardContent({ initialData }: Props) {
             className="filter-input"
             value={filters.user}
             onChange={(event) => handleFiltersChange("user", event.target.value)}
+            disabled={loading}
           >
             <option value="">All Users</option>
             {(dashboard.summary.users_list || []).map((user) => (
@@ -504,42 +676,24 @@ export default function DashboardContent({ initialData }: Props) {
           </select>
         </div>
         <div className="filter-group">
-          <label className="filter-label" htmlFor="sort-select">
-            Leaderboard Sort
-          </label>
-          <select
-            id="sort-select"
-            className="filter-input"
-            value={filters.sortBy}
-            onChange={(event) =>
-              handleFiltersChange("sortBy", event.target.value as SortOption)
-            }
-          >
-            <option value="completions">Completions</option>
-            <option value="attempts">Attempts</option>
-            <option value="efficiency">Efficiency</option>
-          </select>
-        </div>
-        <div className="filter-actions">
-          <button
-            className="filter-button"
-            onClick={applyFilters}
-            disabled={loading}
-            type="button"
-          >
-            {loading ? "Applying..." : "Apply Filters"}
-          </button>
           <button
             className="filter-button secondary"
             onClick={resetFilters}
             disabled={loading}
             type="button"
+            style={{ marginTop: "1.5rem" }}
           >
             Reset
           </button>
+        </div>
+      </section>
+
+      <section className="filters-panel" style={{ marginTop: "1rem" }}>
+        <div className="filter-actions">
           <button
             className="filter-button secondary"
             onClick={exportToCSV}
+            disabled={loading}
             type="button"
             title="Export current tab to CSV"
           >
@@ -548,6 +702,7 @@ export default function DashboardContent({ initialData }: Props) {
           <button
             className="filter-button secondary"
             onClick={exportToExcel}
+            disabled={loading}
             type="button"
             title="Export current tab to Excel"
           >
@@ -565,6 +720,7 @@ export default function DashboardContent({ initialData }: Props) {
             type="button"
             className={`tab-button ${activeTab === tab.id ? "active" : ""}`}
             onClick={() => setActiveTab(tab.id)}
+            disabled={loading}
           >
             {tab.label}
           </button>
@@ -590,28 +746,76 @@ export default function DashboardContent({ initialData }: Props) {
                     <table className="data-table">
                       <thead>
                         <tr>
-                          <th>Rank</th>
-                          <th>User</th>
-                          <th>Completions</th>
-                          <th>Attempts</th>
-                          <th>Success Rate</th>
-                          <th>Messages</th>
-                          <th>Last Activity</th>
-                          <th>Unique Missions</th>
+                          <th
+                            onClick={() => handleLeaderboardSort("user_name")}
+                            style={{ cursor: "pointer" }}
+                            title="Click to sort"
+                          >
+                            User {leaderboardSortKey === "user_name" && (leaderboardSortAsc ? "↑" : "↓")}
+                          </th>
+                          <th
+                            onClick={() => handleLeaderboardSort("total_points")}
+                            style={{ cursor: "pointer" }}
+                            title="Click to sort"
+                          >
+                            Total Points {leaderboardSortKey === "total_points" && (leaderboardSortAsc ? "↑" : "↓")}
+                          </th>
+                          <th
+                            onClick={() => handleLeaderboardSort("completions")}
+                            style={{ cursor: "pointer" }}
+                            title="Click to sort"
+                          >
+                            Completions {leaderboardSortKey === "completions" && (leaderboardSortAsc ? "↑" : "↓")}
+                          </th>
+                          <th
+                            onClick={() => handleLeaderboardSort("attempts")}
+                            style={{ cursor: "pointer" }}
+                            title="Click to sort"
+                          >
+                            Attempts {leaderboardSortKey === "attempts" && (leaderboardSortAsc ? "↑" : "↓")}
+                          </th>
+                          <th
+                            onClick={() => handleLeaderboardSort("efficiency")}
+                            style={{ cursor: "pointer" }}
+                            title="Click to sort"
+                          >
+                            Success Rate {leaderboardSortKey === "efficiency" && (leaderboardSortAsc ? "↑" : "↓")}
+                          </th>
+                          <th
+                            onClick={() => handleLeaderboardSort("total_messages")}
+                            style={{ cursor: "pointer" }}
+                            title="Click to sort"
+                          >
+                            Messages {leaderboardSortKey === "total_messages" && (leaderboardSortAsc ? "↑" : "↓")}
+                          </th>
+                          <th
+                            onClick={() => handleLeaderboardSort("last_attempt")}
+                            style={{ cursor: "pointer" }}
+                            title="Click to sort"
+                          >
+                            Last Activity {leaderboardSortKey === "last_attempt" && (leaderboardSortAsc ? "↑" : "↓")}
+                          </th>
+                          <th
+                            onClick={() => handleLeaderboardSort("unique_missions_completed")}
+                            style={{ cursor: "pointer" }}
+                            title="Click to sort"
+                          >
+                            Unique Missions {leaderboardSortKey === "unique_missions_completed" && (leaderboardSortAsc ? "↑" : "↓")}
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
-                        {dashboard.leaderboard.map((entry, index) => (
+                        {sortedLeaderboard().map((entry) => (
                           <tr key={entry.user_id}>
-                            <td>{index + 1}</td>
                             <td>
                               <span className="badge badge-info">{entry.user_name}</span>
                             </td>
+                            <td>{formatNumber(entry.total_points)}</td>
                             <td>{formatNumber(entry.completions)}</td>
                             <td>{formatNumber(entry.attempts)}</td>
                             <td>{formatPercent(entry.efficiency)}</td>
                             <td>{formatNumber(entry.total_messages)}</td>
-                            <td>{formatChatTimestamp(entry.last_attempt)}</td>
+                            <td>{formatChallengeTimestamp(entry.last_attempt)}</td>
                             <td>
                               <div className="badge-group">
                                 <span className="badge badge-success">
@@ -672,6 +876,141 @@ export default function DashboardContent({ initialData }: Props) {
           </div>
         )}
 
+        {activeTab === "challengeresults" && (
+          <div className="tab-section">
+            {!filters.challenge ? (
+              <div className="no-data">
+                <p>Please select a specific challenge from the Challenge filter to view results.</p>
+              </div>
+            ) : (
+              <>
+                {/* Mission Detail Panel */}
+                {(() => {
+                  const selectedMission = dashboard.mission_breakdown.find(
+                    (m) => m.mission === filters.challenge
+                  );
+                  return selectedMission ? (
+                    <section className="section">
+                      <h2 className="section-title">🎯 Mission Details</h2>
+                      <article className="mission-detail-card">
+                        <header>
+                          <h3>{selectedMission.mission}</h3>
+                          <p>
+                            {formatNumber(selectedMission.completions)} /{" "}
+                            {formatNumber(selectedMission.attempts)} completions
+                          </p>
+                        </header>
+                        <div className="mission-stats">
+                          <div className="mission-stat">
+                            <strong>Success Rate:</strong>{" "}
+                            {formatPercent(selectedMission.success_rate)}
+                          </div>
+                          <div className="mission-stat">
+                            <strong>Unique Users:</strong>{" "}
+                            {formatNumber(selectedMission.unique_users)}
+                          </div>
+                        </div>
+                        <div className="progress-bar">
+                          <div
+                            className="progress-fill"
+                            style={{
+                              width: `${Math.min(selectedMission.success_rate, 100)}%`,
+                            }}
+                          >
+                            {formatPercent(selectedMission.success_rate, 0)} Success
+                          </div>
+                        </div>
+                      </article>
+                    </section>
+                  ) : null;
+                })()}
+
+                {/* Challenge Results Table */}
+                <section className="section">
+                  <h2 className="section-title">🏅 Challenge Results</h2>
+                  {dashboard.challenge_results.length === 0 ? (
+                    <div className="no-data">
+                      <p>No results found for the selected challenge.</p>
+                    </div>
+                  ) : (
+                    <div className="table-wrapper">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th
+                              onClick={() => handleChallengeResultSort("user_name")}
+                              style={{ cursor: "pointer" }}
+                              title="Click to sort"
+                            >
+                              👤 User {challengeResultSortKey === "user_name" && (challengeResultSortAsc ? "↑" : "↓")}
+                            </th>
+                            <th
+                              onClick={() => handleChallengeResultSort("status")}
+                              style={{ cursor: "pointer" }}
+                              title="Click to sort"
+                            >
+                              ✅ Status {challengeResultSortKey === "status" && (challengeResultSortAsc ? "↑" : "↓")}
+                            </th>
+                            <th
+                              onClick={() => handleChallengeResultSort("num_attempts")}
+                              style={{ cursor: "pointer" }}
+                              title="Click to sort"
+                            >
+                              🔢 Attempts {challengeResultSortKey === "num_attempts" && (challengeResultSortAsc ? "↑" : "↓")}
+                            </th>
+                            <th
+                              onClick={() => handleChallengeResultSort("first_attempt_time")}
+                              style={{ cursor: "pointer" }}
+                              title="Click to sort"
+                            >
+                              🚀 First Attempt {challengeResultSortKey === "first_attempt_time" && (challengeResultSortAsc ? "↑" : "↓")}
+                            </th>
+                            <th
+                              onClick={() => handleChallengeResultSort("completed_time")}
+                              style={{ cursor: "pointer" }}
+                              title="Click to sort"
+                            >
+                              🏁 Completed {challengeResultSortKey === "completed_time" && (challengeResultSortAsc ? "↑" : "↓")}
+                            </th>
+                            <th
+                              onClick={() => handleChallengeResultSort("num_messages")}
+                              style={{ cursor: "pointer" }}
+                              title="Click to sort"
+                            >
+                              💬 Messages {challengeResultSortKey === "num_messages" && (challengeResultSortAsc ? "↑" : "↓")}
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sortedChallengeResults().map((result, index) => (
+                            <tr key={`${result.user_id}-${index}`}>
+                              <td>
+                                <span className="badge badge-info">{result.user_name}</span>
+                              </td>
+                              <td>
+                                {result.status && (
+                                  <span className={getStatusBadgeClass(result.status)}>
+                                    {result.status === "Completed" && "✓ "}
+                                    {result.status}
+                                  </span>
+                                )}
+                              </td>
+                              <td>{formatNumber(result.num_attempts)}</td>
+                              <td>{formatChallengeTimestamp(result.first_attempt_time)}</td>
+                              <td>{formatChallengeTimestamp(result.completed_time)}</td>
+                              <td>{formatNumber(result.num_messages)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+              </>
+            )}
+          </div>
+        )}
+
         {activeTab === "allchats" && (
           <div className="tab-section">
             <section className="section">
@@ -680,18 +1019,60 @@ export default function DashboardContent({ initialData }: Props) {
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>#</th>
-                      <th>Title</th>
-                      <th>User</th>
-                      <th>Model</th>
-                      <th>Created At</th>
-                      <th>Messages</th>
-                      <th>Mission</th>
+                      <th
+                        onClick={() => handleAllChatsSort("num")}
+                        style={{ cursor: "pointer" }}
+                        title="Click to sort"
+                      >
+                        # {allChatsSortKey === "num" && (allChatsSortAsc ? "↑" : "↓")}
+                      </th>
+                      <th
+                        onClick={() => handleAllChatsSort("title")}
+                        style={{ cursor: "pointer" }}
+                        title="Click to sort"
+                      >
+                        Title {allChatsSortKey === "title" && (allChatsSortAsc ? "↑" : "↓")}
+                      </th>
+                      <th
+                        onClick={() => handleAllChatsSort("user_name")}
+                        style={{ cursor: "pointer" }}
+                        title="Click to sort"
+                      >
+                        User {allChatsSortKey === "user_name" && (allChatsSortAsc ? "↑" : "↓")}
+                      </th>
+                      <th
+                        onClick={() => handleAllChatsSort("model")}
+                        style={{ cursor: "pointer" }}
+                        title="Click to sort"
+                      >
+                        Model {allChatsSortKey === "model" && (allChatsSortAsc ? "↑" : "↓")}
+                      </th>
+                      <th
+                        onClick={() => handleAllChatsSort("created_at")}
+                        style={{ cursor: "pointer" }}
+                        title="Click to sort"
+                      >
+                        Created At {allChatsSortKey === "created_at" && (allChatsSortAsc ? "↑" : "↓")}
+                      </th>
+                      <th
+                        onClick={() => handleAllChatsSort("message_count")}
+                        style={{ cursor: "pointer" }}
+                        title="Click to sort"
+                      >
+                        Messages {allChatsSortKey === "message_count" && (allChatsSortAsc ? "↑" : "↓")}
+                      </th>
+                      <th
+                        onClick={() => handleAllChatsSort("is_mission")}
+                        style={{ cursor: "pointer" }}
+                        title="Click to sort"
+                      >
+                        Mission {allChatsSortKey === "is_mission" && (allChatsSortAsc ? "↑" : "↓")}
+                      </th>
                       <th>Preview</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {dashboard.all_chats.map((chat) => (
+                    {sortedAllChats().map((chat) => (
                       <tr key={chat.num}>
                         <td>{chat.num}</td>
                         <td>{chat.title}</td>
@@ -754,39 +1135,6 @@ export default function DashboardContent({ initialData }: Props) {
                         style={{ width: `${Math.min(mission.success_rate, 100)}%` }}
                       >
                         {formatPercent(mission.success_rate, 0)} Success
-                      </div>
-                    </div>
-                  </article>
-                ))
-              )}
-            </section>
-          </div>
-        )}
-
-        {activeTab === "models" && (
-          <div className="tab-section">
-            <section className="section">
-              <h2 className="section-title">🤖 Model Usage Statistics</h2>
-              {dashboard.model_stats.length === 0 ? (
-                <p className="muted-text">No model usage data available.</p>
-              ) : (
-                dashboard.model_stats.map((model) => (
-                  <article key={model.model} className="model-card">
-                    <h3>
-                      <code>{model.model}</code>
-                    </h3>
-                    <div className="model-stats">
-                      <div className="model-stat">
-                        <strong>Total Chats:</strong> {formatNumber(model.total)}
-                      </div>
-                      <div className="model-stat">
-                        <strong>Mission Chats:</strong> {formatNumber(model.mission)}
-                      </div>
-                      <div className="model-stat">
-                        <strong>Completed Missions:</strong> {formatNumber(model.completed)}
-                      </div>
-                      <div className="model-stat">
-                        <strong>Mission %:</strong> {formatPercent(model.mission_percentage)}
                       </div>
                     </div>
                   </article>

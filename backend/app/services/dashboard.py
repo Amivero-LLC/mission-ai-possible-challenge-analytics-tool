@@ -19,14 +19,15 @@ if str(PROJECT_ROOT) not in sys.path:
 from .mission_analyzer import DATA_DIR, MissionAnalyzer, find_latest_export  # noqa: E402
 
 from ..schemas import (
+    ChallengeResultEntry,
     ChatMessage,
     ChatPreview,
     DashboardResponse,
     LeaderboardEntry,
     MissionBreakdownEntry,
-    ModelStatsEntry,
     SortOption,
     Summary,
+    UserChallengeExportRow,
 )
 
 
@@ -84,7 +85,7 @@ def _merge_and_update_cache(
     return merged
 
 
-def _extract_model_metadata(records: Iterable[dict]) -> Tuple[Dict[str, str], Set[str], Dict[str, str]]:
+def _extract_model_metadata(records: Iterable[dict]) -> Tuple[Dict[str, str], Set[str], Dict[str, str], Dict[str, str], Dict[str, int]]:
     """
     Normalize a sequence of model records into lookup maps and mission classifications.
 
@@ -97,14 +98,21 @@ def _extract_model_metadata(records: Iterable[dict]) -> Tuple[Dict[str, str], Se
             - dict[str, str]: Mapping of ``model_alias -> friendly_name``.
             - set[str]: Aliases flagged with the ``Missions`` tag (case-insensitive).
             - dict[str, str]: Mapping of ``model_alias -> canonical_id`` used for mission matching.
+            - dict[str, str]: Mapping of ``model_alias -> maip_week`` value.
+            - dict[str, int]: Mapping of ``model_alias -> maip_points_value`` (int).
     """
     lookup: Dict[str, str] = {}
     mission_aliases: Set[str] = set()
     alias_to_primary: Dict[str, str] = {}
+    week_mapping: Dict[str, str] = {}
+    points_mapping: Dict[str, int] = {}
 
     for item in records:
         if not isinstance(item, dict):
             continue
+
+        # Capture top-level model_id before processing raw data
+        top_level_model_id = item.get("id") or item.get("model_id")
 
         # Handle production data format with model_id and raw fields
         if "model_id" in item and "raw" in item:
@@ -114,6 +122,10 @@ def _extract_model_metadata(records: Iterable[dict]) -> Tuple[Dict[str, str], Se
                 item = raw
 
         identifiers: Set[str] = set()
+
+        # Add top-level model_id to identifiers if present
+        if top_level_model_id and isinstance(top_level_model_id, str):
+            identifiers.add(top_level_model_id.strip())
 
         def add_identifier(value: Optional[str]) -> None:
             if value is None:
@@ -196,33 +208,66 @@ def _extract_model_metadata(records: Iterable[dict]) -> Tuple[Dict[str, str], Se
                             # Only add string tags, skip boolean or other types
                             tags.append(tag)
 
+        # Extract maip_week and maip_points_value from custom_params if present
+        maip_week = None
+        maip_points = None
+
+        # Check params.custom_params
+        params = item.get("params")
+        if isinstance(params, dict):
+            custom_params = params.get("custom_params")
+            if isinstance(custom_params, dict):
+                maip_week = custom_params.get("maip_week")
+                maip_points = custom_params.get("maip_points_value")
+
+        # Also check info.params.custom_params
+        if not maip_week or not maip_points:
+            info = item.get("info")
+            if isinstance(info, dict):
+                info_params = info.get("params")
+                if isinstance(info_params, dict):
+                    custom_params = info_params.get("custom_params")
+                    if isinstance(custom_params, dict):
+                        if not maip_week:
+                            maip_week = custom_params.get("maip_week")
+                        if not maip_points:
+                            maip_points = custom_params.get("maip_points_value")
+
         for identifier in identifiers:
             lookup[identifier] = display_name
             alias_to_primary[identifier] = primary_id
+            if maip_week:
+                week_mapping[identifier] = str(maip_week)
+            if maip_points:
+                try:
+                    points_mapping[identifier] = int(maip_points)
+                except (ValueError, TypeError):
+                    pass  # Skip invalid point values
 
         if any(tag.lower() == "missions" for tag in tags):
             mission_aliases.update(identifiers)
 
-    return lookup, mission_aliases, alias_to_primary
+    return lookup, mission_aliases, alias_to_primary, week_mapping, points_mapping
 
 
-def _read_cached_users() -> Optional[Dict[str, str]]:
-    """Read users from the cache file and return as a user_id -> name mapping."""
+def _read_cached_users() -> Optional[Dict[str, dict]]:
+    """Read users from the cache file and return as a user_id -> user info mapping."""
     cached_users = _load_json_cache(USERS_CACHE_FILE)
     if not cached_users:
         return None
 
-    user_map: Dict[str, str] = {}
+    user_map: Dict[str, dict] = {}
     for user in cached_users:
         user_id = user.get("user_id")
         name = user.get("name")
+        email = user.get("email", "")
         if user_id and name:
-            user_map[user_id] = name
+            user_map[user_id] = {"name": name, "email": email}
 
     return user_map if user_map else None
 
 
-def _read_cached_models() -> Optional[Tuple[Dict[str, str], Set[str], Dict[str, str]]]:
+def _read_cached_models() -> Optional[Tuple[Dict[str, str], Set[str], Dict[str, str], Dict[str, str], Dict[str, int]]]:
     """Read models from the cache file and extract metadata."""
     cached_models = _load_json_cache(MODELS_CACHE_FILE)
     if not cached_models:
@@ -231,7 +276,7 @@ def _read_cached_models() -> Optional[Tuple[Dict[str, str], Set[str], Dict[str, 
     return _extract_model_metadata(cached_models)
 
 
-def _load_model_metadata(model_file: Optional[str] = None) -> Tuple[Dict[str, str], Set[str], Dict[str, str]]:
+def _load_model_metadata(model_file: Optional[str] = None) -> Tuple[Dict[str, str], Set[str], Dict[str, str], Dict[str, str], Dict[str, int]]:
     """
     Build lookup tables for model names and mission classification.
 
@@ -247,7 +292,7 @@ def _load_model_metadata(model_file: Optional[str] = None) -> Tuple[Dict[str, st
         return cached_metadata
 
     # Return empty lookups if both API and cache are unavailable
-    return {}, set(), {}
+    return {}, set(), {}, {}, {}
 
 
 def _fetch_remote_chats() -> Optional[List[dict]]:
@@ -274,7 +319,7 @@ def _fetch_remote_chats() -> Optional[List[dict]]:
     return data
 
 
-def _fetch_remote_users() -> Optional[Dict[str, str]]:
+def _fetch_remote_users() -> Optional[Dict[str, dict]]:
     # Mirrors chat fetch logic but normalizes user metadata for display names.
     hostname = os.getenv("OPEN_WEBUI_HOSTNAME") or os.getenv("OPEN_WEB_UI_HOSTNAME")
     api_key = os.getenv("OPEN_WEBUI_API_KEY")
@@ -304,7 +349,7 @@ def _fetch_remote_users() -> Optional[Dict[str, str]]:
 
     # Normalize user records for caching
     user_records = []
-    user_map: Dict[str, str] = {}
+    user_map: Dict[str, dict] = {}
     for item in payload:
         user_id = item.get("id")
         if not user_id:
@@ -312,7 +357,7 @@ def _fetch_remote_users() -> Optional[Dict[str, str]]:
         name = item.get("name") or ""
         email = item.get("email") or ""
         display = name.strip() or (email.split("@")[0] if email else user_id[:8])
-        user_map[user_id] = display
+        user_map[user_id] = {"name": display, "email": email}
 
         # Store normalized user record for cache
         user_records.append({
@@ -327,7 +372,7 @@ def _fetch_remote_users() -> Optional[Dict[str, str]]:
     return user_map
 
 
-def _fetch_remote_models() -> Optional[Tuple[Dict[str, str], Set[str], Dict[str, str]]]:
+def _fetch_remote_models() -> Optional[Tuple[Dict[str, str], Set[str], Dict[str, str], Dict[str, str], Dict[str, int]]]:
     """Retrieve model metadata from OpenWebUI to translate model IDs into names."""
     hostname = os.getenv("OPEN_WEBUI_HOSTNAME") or os.getenv("OPEN_WEB_UI_HOSTNAME")
     api_key = os.getenv("OPEN_WEBUI_API_KEY")
@@ -374,31 +419,13 @@ def _build_chat_previews(
     filter_challenge: Optional[str] = None,
     filter_user: Optional[str] = None,
     filter_status: Optional[str] = None,
-    filter_date_from: Optional[str] = None,
-    filter_date_to: Optional[str] = None,
+    filter_week: Optional[str] = None,
     model_lookup: Optional[Dict[str, str]] = None,
 ) -> List[ChatPreview]:
     """Transform analyzer results into lightweight cards for the frontend, applying filters."""
     mission_lookup: Dict[int, Dict] = {chat["chat_num"]: chat for chat in analyzer.mission_chats}
     previews: List[ChatPreview] = []
     model_lookup = model_lookup or {}
-
-    # Parse date filters if provided
-    date_from_ts = None
-    date_to_ts = None
-    if filter_date_from:
-        try:
-            from datetime import datetime as dt
-            date_from_ts = int(dt.fromisoformat(filter_date_from).timestamp())
-        except (ValueError, AttributeError):
-            pass
-    if filter_date_to:
-        try:
-            from datetime import datetime as dt
-            # Add 23:59:59 to include the entire day
-            date_to_ts = int(dt.fromisoformat(filter_date_to + "T23:59:59").timestamp())
-        except (ValueError, AttributeError):
-            pass
 
     for index, item in enumerate(analyzer.data, start=1):
         chat = item.get("chat", {})
@@ -416,15 +443,6 @@ def _build_chat_previews(
         if filter_user and user_id != filter_user:
             continue
 
-        # Apply date filter
-        if date_from_ts or date_to_ts:
-            chat_timestamp = created_at if isinstance(created_at, (int, float)) else None
-            if chat_timestamp:
-                if date_from_ts and chat_timestamp < date_from_ts:
-                    continue
-                if date_to_ts and chat_timestamp > date_to_ts:
-                    continue
-
         # For mission-specific filters, check if it's a mission chat
         if is_mission and mission_chat:
             mission_info = mission_chat["mission_info"]
@@ -439,7 +457,7 @@ def _build_chat_previews(
                     continue
         else:
             # If filters are applied but this is not a mission chat, skip it
-            if filter_challenge or filter_status:
+            if filter_challenge or filter_status or filter_week:
                 continue
 
         # Resolve a user-friendly model name using the lookup map. Falls back to the raw
@@ -489,35 +507,6 @@ def _build_chat_previews(
     return previews
 
 
-def _build_model_stats(chats: List[ChatPreview]) -> List[ModelStatsEntry]:
-    """Aggregate mission/model counts used to render the model stats tab."""
-    stats: Dict[str, Dict[str, int]] = {}
-    for chat in chats:
-        model_stat = stats.setdefault(chat.model, {"total": 0, "mission": 0, "completed": 0})
-        model_stat["total"] += 1
-        if chat.is_mission:
-            model_stat["mission"] += 1
-        if chat.completed:
-            model_stat["completed"] += 1
-
-    result: List[ModelStatsEntry] = []
-    for model, values in stats.items():
-        total = values["total"]
-        mission = values["mission"]
-        completed = values["completed"]
-        mission_percentage = (mission / total * 100) if total else 0.0
-        result.append(
-            ModelStatsEntry(
-                model=model,
-                total=total,
-                mission=mission,
-                completed=completed,
-                mission_percentage=mission_percentage,
-            )
-        )
-    return sorted(result, key=lambda entry: entry.total, reverse=True)
-
-
 def _decorate_leaderboard(
     analyzer: MissionAnalyzer, raw_leaderboard: List[dict]
 ) -> List[LeaderboardEntry]:
@@ -535,17 +524,32 @@ def _decorate_leaderboard(
                 total_messages=item["total_messages"],
                 unique_missions_attempted=item["unique_missions_attempted"],
                 unique_missions_completed=item["unique_missions_completed"],
+                first_attempt=item.get("first_attempt"),
+                last_attempt=item.get("last_attempt"),
+                total_points=item.get("total_points", 0),
             )
         )
     return entries
 
 
-def _decorate_summary(analyzer: MissionAnalyzer, raw_summary: dict) -> Summary:
+def _decorate_summary(analyzer: MissionAnalyzer, raw_summary: dict, user_info_map: Dict[str, dict]) -> Summary:
     participation_rate = (
         raw_summary["unique_users"] / raw_summary["total_chats"] * 100
         if raw_summary["total_chats"]
         else 0.0
     )
+
+    # Enhance users_list with email information
+    users_list = []
+    for user in raw_summary.get("users_list", []):
+        user_id = user.get("user_id")
+        user_info = user_info_map.get(user_id, {})
+        users_list.append({
+            "user_id": user_id,
+            "user_name": user.get("user_name"),
+            "email": user_info.get("email", "")
+        })
+
     return Summary(
         total_chats=raw_summary["total_chats"],
         mission_attempts=raw_summary["mission_attempts"],
@@ -555,7 +559,7 @@ def _decorate_summary(analyzer: MissionAnalyzer, raw_summary: dict) -> Summary:
         unique_missions=raw_summary["unique_missions"],
         missions_list=raw_summary["missions_list"],
         weeks_list=raw_summary.get("weeks_list", []),
-        users_list=raw_summary.get("users_list", []),
+        users_list=users_list,
         participation_rate=participation_rate,
     )
 
@@ -573,13 +577,186 @@ def _decorate_mission_breakdown(mission_breakdown: List[dict]) -> List[MissionBr
     ]
 
 
+def _decorate_challenge_results(challenge_results: List[dict]) -> List[ChallengeResultEntry]:
+    """Transform raw challenge results into Pydantic models."""
+    return [
+        ChallengeResultEntry(
+            user_id=item["user_id"],
+            user_name=item["user_name"],
+            status=item["status"],
+            num_attempts=item["num_attempts"],
+            first_attempt_time=item["first_attempt_time"],
+            completed_time=item["completed_time"],
+            num_messages=item["num_messages"],
+        )
+        for item in challenge_results
+    ]
+
+
+def _generate_export_data(
+    analyzer: MissionAnalyzer,
+    user_info_map: Dict[str, dict],
+    model_lookup: Dict[str, str],
+    week_mapping: Dict[str, str],
+    points_mapping: Dict[str, int],
+    mission_model_aliases: Set[str],
+    alias_to_primary: Dict[str, str],
+) -> List[dict]:
+    """
+    Generate export data with one row per user/challenge combination.
+
+    Args:
+        analyzer: MissionAnalyzer instance with analyzed data
+        user_info_map: Mapping of user_id -> {"name": name, "email": email}
+        model_lookup: Mapping of model aliases to friendly names
+        week_mapping: Mapping of model aliases to week numbers
+        points_mapping: Mapping of model aliases to point values
+        mission_model_aliases: Set of model aliases tagged as missions
+        alias_to_primary: Mapping of aliases to primary identifiers
+
+    Returns:
+        List of dicts, each representing a user/challenge combination
+    """
+    export_rows = []
+
+    # Get all users from the data
+    all_users = set()
+    for item in analyzer.data:
+        user_id = item.get("user_id", "Unknown")
+        if user_id and user_id != "Unknown":
+            all_users.add(user_id)
+
+    # Get all mission models (challenges)
+    all_missions = []
+    seen_missions = set()
+    for alias in mission_model_aliases:
+        display_name = model_lookup.get(alias, alias)
+        primary_id = alias_to_primary.get(alias, alias)
+        if display_name not in seen_missions:
+            all_missions.append({
+                "display_name": display_name,
+                "primary_id": primary_id,
+                "alias": alias
+            })
+            seen_missions.add(display_name)
+
+    # For each user/challenge combination
+    for user_id in sorted(all_users):
+        user_info = user_info_map.get(user_id, {"name": analyzer.get_user_name(user_id), "email": ""})
+        user_name = user_info.get("name", analyzer.get_user_name(user_id))
+        user_email = user_info.get("email", "")
+
+        for mission in all_missions:
+            challenge_name = mission["display_name"]
+            primary_id = mission["primary_id"]
+            alias = mission["alias"]
+
+            # Get challenge results for this specific challenge and user
+            # We need to filter mission_chats to find this user's attempts for this challenge
+            user_attempts = []
+            for chat in analyzer.mission_chats:
+                if chat["user_id"] != user_id:
+                    continue
+
+                # Check if this chat is for the current mission
+                chat_model = chat["model"]
+                if analyzer._mission_matches_filter(chat_model, challenge_name):
+                    user_attempts.append(chat)
+
+            # Calculate metrics
+            if not user_attempts:
+                # No attempts
+                status = "Empty"
+                completed = "No"
+                num_attempts = 0
+                num_messages = 0
+                datetime_started = None
+                datetime_completed = None
+                points_earned = 0
+            else:
+                # Sort by created_at
+                user_attempts.sort(key=lambda x: x.get("created_at") or 0)
+
+                # Check if completed
+                completed_attempts = [a for a in user_attempts if a["completed"]]
+                if completed_attempts:
+                    status = "Completed"
+                    completed = "Yes"
+                    # Find first completion
+                    first_completion = completed_attempts[0]
+                    completed_idx = user_attempts.index(first_completion)
+                    num_attempts = completed_idx + 1
+                    num_messages = sum(a["message_count"] for a in user_attempts[:num_attempts])
+                    datetime_started = user_attempts[0].get("created_at")
+                    datetime_completed = first_completion.get("created_at")
+
+                    # Calculate points for this challenge
+                    points = points_mapping.get(alias) or points_mapping.get(primary_id)
+                    if points is None:
+                        # Try lowercase variation
+                        for key, val in points_mapping.items():
+                            if key.lower() == alias.lower() or key.lower() == primary_id.lower():
+                                points = val
+                                break
+                    points_earned = points if points is not None else 0
+                else:
+                    status = "Attempted"
+                    completed = "No"
+                    num_attempts = len(user_attempts)
+                    num_messages = sum(a["message_count"] for a in user_attempts)
+                    datetime_started = user_attempts[0].get("created_at")
+                    datetime_completed = None
+                    points_earned = 0
+
+            # Get week for this challenge
+            week = week_mapping.get(alias) or week_mapping.get(primary_id) or ""
+            if not week:
+                # Try lowercase variation
+                for key, val in week_mapping.items():
+                    if key.lower() == alias.lower() or key.lower() == primary_id.lower():
+                        week = val
+                        break
+
+            # Format timestamps as strings if they exist
+            datetime_started_str = None
+            datetime_completed_str = None
+            if datetime_started:
+                if isinstance(datetime_started, (int, float)):
+                    from datetime import datetime
+                    datetime_started_str = datetime.fromtimestamp(datetime_started).isoformat()
+                else:
+                    datetime_started_str = str(datetime_started)
+
+            if datetime_completed:
+                if isinstance(datetime_completed, (int, float)):
+                    from datetime import datetime
+                    datetime_completed_str = datetime.fromtimestamp(datetime_completed).isoformat()
+                else:
+                    datetime_completed_str = str(datetime_completed)
+
+            export_rows.append({
+                "user_name": user_name,
+                "email": user_email,
+                "challenge_name": challenge_name,
+                "status": status,
+                "completed": completed,
+                "num_attempts": num_attempts,
+                "num_messages": num_messages,
+                "week": str(week) if week else "",
+                "datetime_started": datetime_started_str,
+                "datetime_completed": datetime_completed_str,
+                "points_earned": points_earned,
+            })
+
+    return export_rows
+
+
 def build_dashboard_response(
     *,
     data_file: Optional[str] = None,
     user_names_file: Optional[str] = None,
     sort_by: SortOption = SortOption.completions,
-    filter_date_from: Optional[str] = None,
-    filter_date_to: Optional[str] = None,
+    filter_week: Optional[str] = None,
     filter_challenge: Optional[str] = None,
     filter_user: Optional[str] = None,
     filter_status: Optional[str] = None,
@@ -587,9 +764,10 @@ def build_dashboard_response(
     # Resolve user names file relative to DATA_DIR by default
     resolved_user_names = user_names_file or str(Path(DATA_DIR) / "user_names.json")
 
-    model_lookup, mission_model_aliases, alias_to_primary = _load_model_metadata()
+    model_lookup, mission_model_aliases, alias_to_primary, week_mapping, points_mapping = _load_model_metadata()
 
     remote_chats = _fetch_remote_chats()
+    user_info_map = {}  # user_id -> {"name": name, "email": email}
     if remote_chats is not None:
         # Prefer live data when OpenWebUI is reachable; fall back to cached data otherwise.
         remote_users = _fetch_remote_users()
@@ -597,24 +775,37 @@ def build_dashboard_response(
             # Fall back to cached users if API is unavailable
             remote_users = _read_cached_users() or {}
 
+        user_info_map = remote_users
+        # Extract just the names for MissionAnalyzer
+        user_names_only = {uid: info["name"] for uid, info in remote_users.items()}
+
         analyzer = MissionAnalyzer(
             json_file=None,
             data=remote_chats,
             user_names_file=resolved_user_names,
-            user_names=remote_users,
+            user_names=user_names_only,
             model_lookup=model_lookup,
             mission_model_aliases=mission_model_aliases,
             model_alias_to_primary=alias_to_primary,
+            week_mapping=week_mapping,
+            points_mapping=points_mapping,
             verbose=False,
         )
     else:
         resolved_data_file = _pick_data_file(data_file)
+        # Try to load user info from cache for export purposes
+        cached_users = _read_cached_users()
+        if cached_users:
+            user_info_map = cached_users
+
         analyzer = MissionAnalyzer(
             resolved_data_file,
             user_names_file=resolved_user_names,
             model_lookup=model_lookup,
             mission_model_aliases=mission_model_aliases,
             model_alias_to_primary=alias_to_primary,
+            week_mapping=week_mapping,
+            points_mapping=points_mapping,
             verbose=False,
         )
 
@@ -622,12 +813,11 @@ def build_dashboard_response(
         filter_challenge=filter_challenge,
         filter_user=filter_user,
         filter_status=filter_status,
-        filter_date_from=filter_date_from,
-        filter_date_to=filter_date_to,
+        filter_week=filter_week,
     )
 
     # Compose the response sections in the order expected by the frontend.
-    summary = _decorate_summary(analyzer, analyzer.get_summary())
+    summary = _decorate_summary(analyzer, analyzer.get_summary(), user_info_map)
     leaderboard = _decorate_leaderboard(analyzer, analyzer.get_leaderboard(sort_by=sort_by.value))
     missions = _decorate_mission_breakdown(analyzer.get_mission_breakdown())
     chats = _build_chat_previews(
@@ -635,11 +825,25 @@ def build_dashboard_response(
         filter_challenge=filter_challenge,
         filter_user=filter_user,
         filter_status=filter_status,
-        filter_date_from=filter_date_from,
-        filter_date_to=filter_date_to,
+        filter_week=filter_week,
         model_lookup=model_lookup,
     )
-    model_stats = _build_model_stats(chats)
+    challenge_results = _decorate_challenge_results(
+        analyzer.get_challenge_results(filter_challenge=filter_challenge)
+    )
+
+    # Generate export data (all user/challenge combinations)
+    export_data_raw = _generate_export_data(
+        analyzer=analyzer,
+        user_info_map=user_info_map,
+        model_lookup=model_lookup,
+        week_mapping=week_mapping,
+        points_mapping=points_mapping,
+        mission_model_aliases=mission_model_aliases,
+        alias_to_primary=alias_to_primary,
+    )
+
+    export_data = [UserChallengeExportRow(**row) for row in export_data_raw]
 
     return DashboardResponse(
         generated_at=datetime.now(timezone.utc),
@@ -647,5 +851,6 @@ def build_dashboard_response(
         leaderboard=leaderboard,
         mission_breakdown=missions,
         all_chats=chats,
-        model_stats=model_stats,
+        challenge_results=challenge_results,
+        export_data=export_data,
     )

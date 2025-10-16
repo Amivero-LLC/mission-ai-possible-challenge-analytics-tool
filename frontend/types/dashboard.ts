@@ -3,6 +3,21 @@ export type SortOption = "completions" | "attempts" | "efficiency";
 export interface UserInfo {
   user_id: string;
   user_name: string;
+  email?: string;
+}
+
+export interface UserChallengeExportRow {
+  user_name: string;
+  email: string;
+  challenge_name: string;
+  status: string;
+  completed: string;
+  num_attempts: number;
+  num_messages: number;
+  week: string;
+  datetime_started: string | null;
+  datetime_completed: string | null;
+  points_earned: number;
 }
 
 export interface Summary {
@@ -29,6 +44,7 @@ export interface LeaderboardEntry {
   unique_missions_completed: number;
   first_attempt?: string | number | null;
   last_attempt?: string | number | null;
+  total_points: number;
 }
 
 export interface MissionBreakdownEntry {
@@ -57,12 +73,14 @@ export interface ChatPreview {
   messages: ChatMessage[];
 }
 
-export interface ModelStatsEntry {
-  model: string;
-  total: number;
-  mission: number;
-  completed: number;
-  mission_percentage: number;
+export interface ChallengeResultEntry {
+  user_id: string;
+  user_name: string;
+  status: string; // "Completed", "Attempted", or empty string
+  num_attempts: number;
+  first_attempt_time?: string | number | null;
+  completed_time?: string | number | null;
+  num_messages: number;
 }
 
 export interface DashboardResponse {
@@ -71,5 +89,6 @@ export interface DashboardResponse {
   leaderboard: LeaderboardEntry[];
   mission_breakdown: MissionBreakdownEntry[];
   all_chats: ChatPreview[];
-  model_stats: ModelStatsEntry[];
+  challenge_results: ChallengeResultEntry[];
+  export_data: UserChallengeExportRow[];
 }

@@ -18,6 +18,7 @@ class SortOption(str, Enum):
 class UserInfo(BaseModel):
     user_id: str
     user_name: str
+    email: Optional[str] = None
 
 
 class Summary(BaseModel):
@@ -44,6 +45,7 @@ class LeaderboardEntry(BaseModel):
     unique_missions_completed: int = Field(..., ge=0)
     first_attempt: Optional[Union[str, int, float]] = None
     last_attempt: Optional[Union[str, int, float]] = None
+    total_points: int = Field(default=0, ge=0)
 
 
 class MissionBreakdownEntry(BaseModel):
@@ -72,12 +74,28 @@ class ChatPreview(BaseModel):
     messages: List[ChatMessage] = Field(default_factory=list)
 
 
-class ModelStatsEntry(BaseModel):
-    model: str
-    total: int = Field(..., ge=0)
-    mission: int = Field(..., ge=0)
-    completed: int = Field(..., ge=0)
-    mission_percentage: float = Field(..., ge=0)
+class ChallengeResultEntry(BaseModel):
+    user_id: str
+    user_name: str
+    status: str  # "Completed", "Attempted", or empty string
+    num_attempts: int = Field(..., ge=0)
+    first_attempt_time: Optional[Union[str, int, float]] = None
+    completed_time: Optional[Union[str, int, float]] = None
+    num_messages: int = Field(..., ge=0)
+
+
+class UserChallengeExportRow(BaseModel):
+    user_name: str
+    email: str
+    challenge_name: str
+    status: str  # "Completed", "Attempted", or "Empty"
+    completed: str  # "Yes" or "No"
+    num_attempts: int = Field(default=0, ge=0)
+    num_messages: int = Field(default=0, ge=0)
+    week: str
+    datetime_started: Optional[str] = None
+    datetime_completed: Optional[str] = None
+    points_earned: int = Field(default=0, ge=0)
 
 
 class DashboardResponse(BaseModel):
@@ -86,4 +104,5 @@ class DashboardResponse(BaseModel):
     leaderboard: List[LeaderboardEntry] = Field(default_factory=list)
     mission_breakdown: List[MissionBreakdownEntry] = Field(default_factory=list)
     all_chats: List[ChatPreview] = Field(default_factory=list)
-    model_stats: List[ModelStatsEntry] = Field(default_factory=list)
+    challenge_results: List[ChallengeResultEntry] = Field(default_factory=list)
+    export_data: List[UserChallengeExportRow] = Field(default_factory=list)

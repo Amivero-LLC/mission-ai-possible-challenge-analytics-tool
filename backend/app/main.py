@@ -29,8 +29,7 @@ def health_check() -> dict:
 @app.get("/dashboard", response_model=DashboardResponse)
 def get_dashboard(
     sort_by: SortOption = Query(default=SortOption.completions),
-    date_from: Optional[str] = Query(default=None, min_length=1),
-    date_to: Optional[str] = Query(default=None, min_length=1),
+    week: Optional[str] = Query(default=None, min_length=1),
     challenge: Optional[str] = Query(default=None, min_length=1),
     user_id: Optional[str] = Query(default=None, min_length=1),
     status: Optional[str] = Query(default=None, min_length=1),
@@ -43,8 +42,7 @@ def get_dashboard(
             data_file=data_file,
             user_names_file=user_names_file,
             sort_by=sort_by,
-            filter_date_from=date_from,
-            filter_date_to=date_to,
+            filter_week=week,
             filter_challenge=challenge,
             filter_user=user_id,
             filter_status=status,
