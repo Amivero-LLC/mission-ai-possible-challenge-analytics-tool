@@ -29,6 +29,7 @@ class Summary(BaseModel):
     unique_users: int = Field(..., ge=0)
     unique_missions: int = Field(..., ge=0)
     missions_list: List[str] = Field(default_factory=list)
+    missions_with_weeks: dict = Field(default_factory=dict)  # mission_name -> week
     weeks_list: List[int] = Field(default_factory=list)
     users_list: List[UserInfo] = Field(default_factory=list)
     participation_rate: float = Field(..., ge=0)
@@ -93,6 +94,7 @@ class UserChallengeExportRow(BaseModel):
     num_attempts: int = Field(default=0, ge=0)
     num_messages: int = Field(default=0, ge=0)
     week: str
+    difficulty: str
     datetime_started: Optional[str] = None
     datetime_completed: Optional[str] = None
     points_earned: int = Field(default=0, ge=0)

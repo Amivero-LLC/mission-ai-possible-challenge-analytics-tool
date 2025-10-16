@@ -15,6 +15,7 @@ export interface UserChallengeExportRow {
   num_attempts: number;
   num_messages: number;
   week: string;
+  difficulty: string;
   datetime_started: string | null;
   datetime_completed: string | null;
   points_earned: number;
@@ -28,6 +29,7 @@ export interface Summary {
   unique_users: number;
   unique_missions: number;
   missions_list: string[];
+  missions_with_weeks: Record<string, string>; // mission_name -> week
   weeks_list: number[];
   users_list: UserInfo[];
   participation_rate: number;

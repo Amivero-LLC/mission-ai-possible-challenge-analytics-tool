@@ -85,7 +85,7 @@ def _merge_and_update_cache(
     return merged
 
 
-def _extract_model_metadata(records: Iterable[dict]) -> Tuple[Dict[str, str], Set[str], Dict[str, str], Dict[str, str], Dict[str, int]]:
+def _extract_model_metadata(records: Iterable[dict]) -> Tuple[Dict[str, str], Set[str], Dict[str, str], Dict[str, str], Dict[str, int], Dict[str, str]]:
     """
     Normalize a sequence of model records into lookup maps and mission classifications.
 
@@ -100,12 +100,14 @@ def _extract_model_metadata(records: Iterable[dict]) -> Tuple[Dict[str, str], Se
             - dict[str, str]: Mapping of ``model_alias -> canonical_id`` used for mission matching.
             - dict[str, str]: Mapping of ``model_alias -> maip_week`` value.
             - dict[str, int]: Mapping of ``model_alias -> maip_points_value`` (int).
+            - dict[str, str]: Mapping of ``model_alias -> maip_difficulty_level`` value.
     """
     lookup: Dict[str, str] = {}
     mission_aliases: Set[str] = set()
     alias_to_primary: Dict[str, str] = {}
     week_mapping: Dict[str, str] = {}
     points_mapping: Dict[str, int] = {}
+    difficulty_mapping: Dict[str, str] = {}
 
     for item in records:
         if not isinstance(item, dict):
@@ -208,9 +210,10 @@ def _extract_model_metadata(records: Iterable[dict]) -> Tuple[Dict[str, str], Se
                             # Only add string tags, skip boolean or other types
                             tags.append(tag)
 
-        # Extract maip_week and maip_points_value from custom_params if present
+        # Extract maip_week, maip_points_value, and maip_difficulty_level from custom_params if present
         maip_week = None
         maip_points = None
+        maip_difficulty = None
 
         # Check params.custom_params
         params = item.get("params")
@@ -219,9 +222,10 @@ def _extract_model_metadata(records: Iterable[dict]) -> Tuple[Dict[str, str], Se
             if isinstance(custom_params, dict):
                 maip_week = custom_params.get("maip_week")
                 maip_points = custom_params.get("maip_points_value")
+                maip_difficulty = custom_params.get("maip_difficulty_level")
 
         # Also check info.params.custom_params
-        if not maip_week or not maip_points:
+        if not maip_week or not maip_points or not maip_difficulty:
             info = item.get("info")
             if isinstance(info, dict):
                 info_params = info.get("params")
@@ -232,6 +236,8 @@ def _extract_model_metadata(records: Iterable[dict]) -> Tuple[Dict[str, str], Se
                             maip_week = custom_params.get("maip_week")
                         if not maip_points:
                             maip_points = custom_params.get("maip_points_value")
+                        if not maip_difficulty:
+                            maip_difficulty = custom_params.get("maip_difficulty_level")
 
         for identifier in identifiers:
             lookup[identifier] = display_name
@@ -243,11 +249,13 @@ def _extract_model_metadata(records: Iterable[dict]) -> Tuple[Dict[str, str], Se
                     points_mapping[identifier] = int(maip_points)
                 except (ValueError, TypeError):
                     pass  # Skip invalid point values
+            if maip_difficulty:
+                difficulty_mapping[identifier] = str(maip_difficulty)
 
         if any(tag.lower() == "missions" for tag in tags):
             mission_aliases.update(identifiers)
 
-    return lookup, mission_aliases, alias_to_primary, week_mapping, points_mapping
+    return lookup, mission_aliases, alias_to_primary, week_mapping, points_mapping, difficulty_mapping
 
 
 def _read_cached_users() -> Optional[Dict[str, dict]]:
@@ -267,7 +275,7 @@ def _read_cached_users() -> Optional[Dict[str, dict]]:
     return user_map if user_map else None
 
 
-def _read_cached_models() -> Optional[Tuple[Dict[str, str], Set[str], Dict[str, str], Dict[str, str], Dict[str, int]]]:
+def _read_cached_models() -> Optional[Tuple[Dict[str, str], Set[str], Dict[str, str], Dict[str, str], Dict[str, int], Dict[str, str]]]:
     """Read models from the cache file and extract metadata."""
     cached_models = _load_json_cache(MODELS_CACHE_FILE)
     if not cached_models:
@@ -276,7 +284,7 @@ def _read_cached_models() -> Optional[Tuple[Dict[str, str], Set[str], Dict[str, 
     return _extract_model_metadata(cached_models)
 
 
-def _load_model_metadata(model_file: Optional[str] = None) -> Tuple[Dict[str, str], Set[str], Dict[str, str], Dict[str, str], Dict[str, int]]:
+def _load_model_metadata(model_file: Optional[str] = None) -> Tuple[Dict[str, str], Set[str], Dict[str, str], Dict[str, str], Dict[str, int], Dict[str, str]]:
     """
     Build lookup tables for model names and mission classification.
 
@@ -292,7 +300,7 @@ def _load_model_metadata(model_file: Optional[str] = None) -> Tuple[Dict[str, st
         return cached_metadata
 
     # Return empty lookups if both API and cache are unavailable
-    return {}, set(), {}, {}, {}
+    return {}, set(), {}, {}, {}, {}
 
 
 def _fetch_remote_chats() -> Optional[List[dict]]:
@@ -372,7 +380,7 @@ def _fetch_remote_users() -> Optional[Dict[str, dict]]:
     return user_map
 
 
-def _fetch_remote_models() -> Optional[Tuple[Dict[str, str], Set[str], Dict[str, str], Dict[str, str], Dict[str, int]]]:
+def _fetch_remote_models() -> Optional[Tuple[Dict[str, str], Set[str], Dict[str, str], Dict[str, str], Dict[str, int], Dict[str, str]]]:
     """Retrieve model metadata from OpenWebUI to translate model IDs into names."""
     hostname = os.getenv("OPEN_WEBUI_HOSTNAME") or os.getenv("OPEN_WEB_UI_HOSTNAME")
     api_key = os.getenv("OPEN_WEBUI_API_KEY")
@@ -558,6 +566,7 @@ def _decorate_summary(analyzer: MissionAnalyzer, raw_summary: dict, user_info_ma
         unique_users=raw_summary["unique_users"],
         unique_missions=raw_summary["unique_missions"],
         missions_list=raw_summary["missions_list"],
+        missions_with_weeks=raw_summary.get("missions_with_weeks", {}),
         weeks_list=raw_summary.get("weeks_list", []),
         users_list=users_list,
         participation_rate=participation_rate,
@@ -599,6 +608,7 @@ def _generate_export_data(
     model_lookup: Dict[str, str],
     week_mapping: Dict[str, str],
     points_mapping: Dict[str, int],
+    difficulty_mapping: Dict[str, str],
     mission_model_aliases: Set[str],
     alias_to_primary: Dict[str, str],
 ) -> List[dict]:
@@ -611,6 +621,7 @@ def _generate_export_data(
         model_lookup: Mapping of model aliases to friendly names
         week_mapping: Mapping of model aliases to week numbers
         points_mapping: Mapping of model aliases to point values
+        difficulty_mapping: Mapping of model aliases to difficulty levels
         mission_model_aliases: Set of model aliases tagged as missions
         alias_to_primary: Mapping of aliases to primary identifiers
 
@@ -717,6 +728,15 @@ def _generate_export_data(
                         week = val
                         break
 
+            # Get difficulty for this challenge
+            difficulty = difficulty_mapping.get(alias) or difficulty_mapping.get(primary_id) or ""
+            if not difficulty:
+                # Try lowercase variation
+                for key, val in difficulty_mapping.items():
+                    if key.lower() == alias.lower() or key.lower() == primary_id.lower():
+                        difficulty = val
+                        break
+
             # Format timestamps as strings if they exist
             datetime_started_str = None
             datetime_completed_str = None
@@ -743,6 +763,7 @@ def _generate_export_data(
                 "num_attempts": num_attempts,
                 "num_messages": num_messages,
                 "week": str(week) if week else "",
+                "difficulty": str(difficulty) if difficulty else "",
                 "datetime_started": datetime_started_str,
                 "datetime_completed": datetime_completed_str,
                 "points_earned": points_earned,
@@ -764,7 +785,7 @@ def build_dashboard_response(
     # Resolve user names file relative to DATA_DIR by default
     resolved_user_names = user_names_file or str(Path(DATA_DIR) / "user_names.json")
 
-    model_lookup, mission_model_aliases, alias_to_primary, week_mapping, points_mapping = _load_model_metadata()
+    model_lookup, mission_model_aliases, alias_to_primary, week_mapping, points_mapping, difficulty_mapping = _load_model_metadata()
 
     remote_chats = _fetch_remote_chats()
     user_info_map = {}  # user_id -> {"name": name, "email": email}
@@ -839,6 +860,7 @@ def build_dashboard_response(
         model_lookup=model_lookup,
         week_mapping=week_mapping,
         points_mapping=points_mapping,
+        difficulty_mapping=difficulty_mapping,
         mission_model_aliases=mission_model_aliases,
         alias_to_primary=alias_to_primary,
     )

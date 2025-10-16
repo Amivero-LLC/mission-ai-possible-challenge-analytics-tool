@@ -181,8 +181,25 @@ export default function DashboardContent({ initialData }: Props) {
   const [allChatsSortAsc, setAllChatsSortAsc] = useState(false);
 
   const handleFiltersChange = (key: keyof FilterState, value: string) => {
-    setFilters((prev) => ({ ...prev, [key]: value }));
+    setFilters((prev) => {
+      const newFilters = { ...prev, [key]: value };
+      // Clear challenge filter when week changes
+      if (key === "week") {
+        newFilters.challenge = "";
+      }
+      return newFilters;
+    });
   };
+
+  /**
+   * Filter missions list based on selected week
+   */
+  const filteredMissions = filters.week
+    ? (dashboard.summary.missions_list || []).filter((mission) => {
+        const missionWeek = dashboard.summary.missions_with_weeks?.[mission];
+        return missionWeek === filters.week;
+      })
+    : dashboard.summary.missions_list || [];
 
   /**
    * Restore default filters and reload the dashboard.
@@ -251,6 +268,7 @@ export default function DashboardContent({ initialData }: Props) {
       "Number of Attempts": row.num_attempts,
       "Number of Messages": row.num_messages,
       "Week": row.week,
+      "Difficulty": row.difficulty,
       "DateTime Started": row.datetime_started || "",
       "DateTime Completed": row.datetime_completed || "",
       "Points Earned": row.points_earned,
@@ -297,6 +315,7 @@ export default function DashboardContent({ initialData }: Props) {
       "Number of Attempts": row.num_attempts,
       "Number of Messages": row.num_messages,
       "Week": row.week,
+      "Difficulty": row.difficulty,
       "DateTime Started": row.datetime_started || "",
       "DateTime Completed": row.datetime_completed || "",
       "Points Earned": row.points_earned,
@@ -633,7 +652,7 @@ export default function DashboardContent({ initialData }: Props) {
             disabled={loading}
           >
             <option value="">All Challenges</option>
-            {(dashboard.summary.missions_list || []).map((mission) => (
+            {filteredMissions.map((mission) => (
               <option key={mission} value={mission}>
                 {mission}
               </option>
@@ -689,6 +708,9 @@ export default function DashboardContent({ initialData }: Props) {
       </section>
 
       <section className="filters-panel" style={{ marginTop: "1rem" }}>
+        <h3 style={{ marginBottom: "1rem", fontSize: "1.1rem", fontWeight: "600" }}>
+          Export Results
+        </h3>
         <div className="filter-actions">
           <button
             className="filter-button secondary"

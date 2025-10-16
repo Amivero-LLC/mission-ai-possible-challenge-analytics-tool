@@ -775,6 +775,7 @@ class MissionAnalyzer:
 
         # Build missions_list from all models with "Missions" tag (from Open WebUI API)
         # This shows ALL available mission models, not just the ones that have been attempted
+        missions_with_weeks = {}  # mission_name -> week
         if self.mission_model_aliases:
             missions_list = []
             seen_names = set()
@@ -784,6 +785,32 @@ class MissionAnalyzer:
                 if display_name not in seen_names:
                     missions_list.append(display_name)
                     seen_names.add(display_name)
+
+                    # Get week for this mission from week_mapping - try multiple identifier variations
+                    week = self.week_mapping.get(alias)
+
+                    # Try the primary identifier
+                    if not week:
+                        primary = self._resolve_primary_identifier(alias)
+                        if primary:
+                            week = self.week_mapping.get(primary)
+
+                    # Try the resolved alias
+                    if not week:
+                        resolved = self._resolve_alias(alias)
+                        if resolved:
+                            week = self.week_mapping.get(resolved)
+
+                    # Try lowercase variation
+                    if not week:
+                        alias_lower = str(alias).lower()
+                        for key, val in self.week_mapping.items():
+                            if key.lower() == alias_lower:
+                                week = val
+                                break
+
+                    if week:
+                        missions_with_weeks[display_name] = str(week)
             missions_list = sorted(missions_list)
         else:
             # Fallback: if no models with "Missions" tag found, use model IDs from chat records
@@ -812,6 +839,7 @@ class MissionAnalyzer:
             "unique_users": unique_users,
             "unique_missions": len(unique_missions),
             "missions_list": missions_list,
+            "missions_with_weeks": missions_with_weeks,
             "weeks_list": sorted(list(unique_weeks)),
             "users_list": users_list,
         }
