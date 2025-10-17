@@ -516,6 +516,19 @@ class MissionAnalyzer:
                 return mission_id
         return None
 
+    @staticmethod
+    def _count_user_messages(messages):
+        """
+        Count how many messages in a sequence were authored by the user.
+        """
+        if not messages:
+            return 0
+        count = 0
+        for msg in messages:
+            if isinstance(msg, dict) and msg.get("role") == "user":
+                count += 1
+        return count
+
     def _canonical_mission_key(self, mission_model):
         """
         Produce a consistent lowercase key for mission comparisons.
@@ -748,6 +761,7 @@ class MissionAnalyzer:
                         relevant_messages = messages
 
                 mission_message_count = len(relevant_messages)
+                mission_user_message_count = self._count_user_messages(relevant_messages)
 
                 mission_data = {
                     "chat_num": i,
@@ -757,6 +771,7 @@ class MissionAnalyzer:
                     "mission_info": mission_info,
                     "messages": relevant_messages,
                     "message_count": mission_message_count,
+                    "user_message_count": mission_user_message_count,
                     "created_at": created_at,
                     "completed": completed,
                 }
@@ -767,7 +782,7 @@ class MissionAnalyzer:
                 stats["user_id"] = user_id
                 stats["missions_attempted"].append(mission_info["mission_id"])
                 stats["total_attempts"] += 1
-                stats["total_messages"] += mission_message_count
+                stats["total_messages"] += mission_user_message_count
 
                 if completed:
                     completion_key = mission_key
@@ -1054,7 +1069,12 @@ class MissionAnalyzer:
                     # Count attempts up to and including completion
                     num_attempts = completed_idx + 1
                     # Count messages up to and including completion
-                    num_messages = sum(c["message_count"] for c in sorted_chats[:num_attempts])
+                    num_messages = 0
+                    for conversation in sorted_chats[:num_attempts]:
+                        if "user_message_count" in conversation:
+                            num_messages += conversation["user_message_count"]
+                        else:
+                            num_messages += self._count_user_messages(conversation.get("messages", []))
 
                     breakdown[mission_id]["user_completion_data"].append({
                         "user_id": user_id,
@@ -1206,6 +1226,7 @@ class MissionAnalyzer:
             conv_data = {
                 "created_at": chat["created_at"],
                 "message_count": chat["message_count"],
+                "user_message_count": chat.get("user_message_count", self._count_user_messages(chat.get("messages", []))),
                 "completed": chat["completed"],
                 "messages": chat["messages"],
             }
@@ -1258,17 +1279,24 @@ class MissionAnalyzer:
                 num_attempts = completion_conv_index + 1
 
                 # Count total messages before completion
-                num_messages = sum(
-                    conv["message_count"]
-                    for conv in conversations[:num_attempts]
-                )
+                num_messages = 0
+                for conv in conversations[:num_attempts]:
+                    if "user_message_count" in conv:
+                        num_messages += conv["user_message_count"]
+                    else:
+                        num_messages += self._count_user_messages(conv.get("messages", []))
 
                 status = "Completed"
                 completed_time = data["completion_time"]
             else:
                 # Not completed yet
                 num_attempts = len(conversations)
-                num_messages = sum(conv["message_count"] for conv in conversations)
+                num_messages = 0
+                for conv in conversations:
+                    if "user_message_count" in conv:
+                        num_messages += conv["user_message_count"]
+                    else:
+                        num_messages += self._count_user_messages(conv.get("messages", []))
                 status = "Attempted"
                 completed_time = None
 

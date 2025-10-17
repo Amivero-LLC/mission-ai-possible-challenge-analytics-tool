@@ -705,7 +705,12 @@ def _generate_export_data(
                     first_completion = completed_attempts[0]
                     completed_idx = user_attempts.index(first_completion)
                     num_attempts = completed_idx + 1
-                    num_messages = sum(a["message_count"] for a in user_attempts[:num_attempts])
+                    num_messages = 0
+                    for attempt in user_attempts[:num_attempts]:
+                        if "user_message_count" in attempt:
+                            num_messages += attempt["user_message_count"]
+                        else:
+                            num_messages += analyzer._count_user_messages(attempt.get("messages", []))
                     datetime_started = user_attempts[0].get("created_at")
                     datetime_completed = first_completion.get("created_at")
 
@@ -722,7 +727,12 @@ def _generate_export_data(
                     status = "Attempted"
                     completed = "No"
                     num_attempts = len(user_attempts)
-                    num_messages = sum(a["message_count"] for a in user_attempts)
+                    num_messages = 0
+                    for attempt in user_attempts:
+                        if "user_message_count" in attempt:
+                            num_messages += attempt["user_message_count"]
+                        else:
+                            num_messages += analyzer._count_user_messages(attempt.get("messages", []))
                     datetime_started = user_attempts[0].get("created_at")
                     datetime_completed = None
                     points_earned = 0
