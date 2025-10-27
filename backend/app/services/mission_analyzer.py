@@ -142,6 +142,7 @@ class MissionAnalyzer:
             "you win",
             "you got it",
             "MISSION_CODE:314-GHOST",
+            "Mission complete",
         ]
 
         if user_names:

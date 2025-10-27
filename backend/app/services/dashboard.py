@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from datetime import datetime, timezone
@@ -34,6 +35,9 @@ from ..schemas import (
 # Cache file paths
 USERS_CACHE_FILE = Path(DATA_DIR) / "users.json"
 MODELS_CACHE_FILE = Path(DATA_DIR) / "models.json"
+
+
+logger = logging.getLogger(__name__)
 
 
 def _load_json_cache(file_path: Path) -> Optional[List[dict]]:
@@ -317,8 +321,14 @@ def _fetch_remote_chats() -> Optional[List[dict]]:
     try:
         response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
-    except requests.exceptions.RequestException as exc:  # pragma: no cover - network failure
+    except requests.exceptions.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"Failed to fetch chats from OpenWebUI: {exc}") from exc
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+        logger.warning("OpenWebUI chats fetch failed (%s); falling back to local exports", exc)
+        return None
+    except requests.exceptions.RequestException as exc:  # pragma: no cover - network failure
+        logger.warning("OpenWebUI chats fetch failed (%s); falling back to local exports", exc)
+        return None
 
     data = response.json()
     if not isinstance(data, list):
@@ -341,8 +351,14 @@ def _fetch_remote_users() -> Optional[Dict[str, dict]]:
     try:
         response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
-    except requests.exceptions.RequestException as exc:  # pragma: no cover
+    except requests.exceptions.HTTPError as exc:  # pragma: no cover - surface auth errors
         raise HTTPException(status_code=502, detail=f"Failed to fetch users from OpenWebUI: {exc}") from exc
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:  # pragma: no cover - network failure
+        logger.warning("OpenWebUI users fetch failed (%s); falling back to cached users", exc)
+        return None
+    except requests.exceptions.RequestException as exc:  # pragma: no cover - network failure
+        logger.warning("OpenWebUI users fetch failed (%s); falling back to cached users", exc)
+        return None
 
     payload = response.json()
     if isinstance(payload, dict):
