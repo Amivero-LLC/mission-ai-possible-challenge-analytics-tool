@@ -118,3 +118,65 @@ class DashboardResponse(BaseModel):
     all_chats: List[ChatPreview] = Field(default_factory=list)
     challenge_results: List[ChallengeResultEntry] = Field(default_factory=list)
     export_data: List[UserChallengeExportRow] = Field(default_factory=list)
+
+
+class ChallengeAttempt(BaseModel):
+    challenge_name: str
+    challenge_id: str
+    week: str
+    difficulty: str
+    points: int = Field(default=0, ge=0)
+    status: str  # "Completed", "Attempted", or "Not Started"
+    num_attempts: int = Field(default=0, ge=0)
+    num_messages: int = Field(default=0, ge=0)
+    first_attempt_time: Optional[Union[str, int, float]] = None
+    completed_time: Optional[Union[str, int, float]] = None
+
+
+class UserWithChallenges(BaseModel):
+    user_id: str
+    user_name: str
+    email: Optional[str] = None
+    total_attempts: int = Field(default=0, ge=0)
+    total_completions: int = Field(default=0, ge=0)
+    total_points: int = Field(default=0, ge=0)
+    efficiency: float = Field(default=0.0, ge=0)
+    challenges: List[ChallengeAttempt] = Field(default_factory=list)
+
+
+class UsersResponse(BaseModel):
+    generated_at: datetime
+    users: List[UserWithChallenges] = Field(default_factory=list)
+
+
+class UserParticipation(BaseModel):
+    user_id: str
+    user_name: str
+    email: Optional[str] = None
+    status: str  # "Completed", "Attempted", or "Not Started"
+    num_attempts: int = Field(default=0, ge=0)
+    num_messages: int = Field(default=0, ge=0)
+    first_attempt_time: Optional[Union[str, int, float]] = None
+    completed_time: Optional[Union[str, int, float]] = None
+
+
+class ChallengeWithUsers(BaseModel):
+    challenge_name: str
+    challenge_id: str
+    week: str
+    difficulty: str
+    points: int = Field(default=0, ge=0)
+    total_attempts: int = Field(default=0, ge=0)
+    total_completions: int = Field(default=0, ge=0)
+    success_rate: float = Field(default=0.0, ge=0)
+    users_attempted: int = Field(default=0, ge=0)
+    users_completed: int = Field(default=0, ge=0)
+    users_not_started: int = Field(default=0, ge=0)
+    avg_messages_to_complete: float = Field(default=0.0, ge=0)
+    avg_attempts_to_complete: float = Field(default=0.0, ge=0)
+    participants: List[UserParticipation] = Field(default_factory=list)
+
+
+class ChallengesResponse(BaseModel):
+    generated_at: datetime
+    challenges: List[ChallengeWithUsers] = Field(default_factory=list)

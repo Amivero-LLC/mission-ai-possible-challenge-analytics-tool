@@ -6,8 +6,12 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from .schemas import DashboardResponse, SortOption
-from .services.dashboard import build_dashboard_response
+from .schemas import ChallengesResponse, DashboardResponse, SortOption, UsersResponse
+from .services.dashboard import (
+    build_challenges_response,
+    build_dashboard_response,
+    build_users_response,
+)
 
 # FastAPI instance serves data to the analytics frontend.
 app = FastAPI(title="Mission Dashboard API", version="1.0.0")
@@ -87,3 +91,107 @@ def refresh_data() -> dict:
         raise exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to refresh data: {str(exc)}") from exc
+
+
+@app.get("/users", response_model=UsersResponse)
+def get_users() -> UsersResponse:
+    """
+    Get a list of all users with their attempted/completed challenges.
+
+    Returns:
+        UsersResponse: A list of users with detailed challenge participation information including:
+            - User identification (id, name, email)
+            - Overall statistics (total attempts, completions, points, efficiency)
+            - Per-challenge details (status, attempts, messages, timestamps)
+
+    Example response structure:
+        {
+            "generated_at": "2025-10-27T22:00:00Z",
+            "users": [
+                {
+                    "user_id": "abc123",
+                    "user_name": "John Doe",
+                    "email": "john@example.com",
+                    "total_attempts": 5,
+                    "total_completions": 3,
+                    "total_points": 150,
+                    "efficiency": 60.0,
+                    "challenges": [
+                        {
+                            "challenge_name": "Intel Guardian",
+                            "challenge_id": "intel-guardian",
+                            "week": "1",
+                            "difficulty": "Medium",
+                            "points": 50,
+                            "status": "Completed",
+                            "num_attempts": 2,
+                            "num_messages": 15,
+                            "first_attempt_time": 1234567890,
+                            "completed_time": 1234567900
+                        }
+                    ]
+                }
+            ]
+        }
+    """
+    try:
+        return build_users_response()
+    except HTTPException as exc:
+        raise exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/challenges", response_model=ChallengesResponse)
+def get_challenges() -> ChallengesResponse:
+    """
+    Get a list of all challenges with users who attempted/completed them.
+
+    Returns:
+        ChallengesResponse: A list of challenges with detailed participant information including:
+            - Challenge metadata (name, id, week, difficulty, points)
+            - Aggregate statistics (attempts, completions, success rate)
+            - User participation breakdown (attempted, completed, not started)
+            - Performance metrics (avg messages/attempts to complete)
+            - Per-user participation details
+
+    Example response structure:
+        {
+            "generated_at": "2025-10-27T22:00:00Z",
+            "challenges": [
+                {
+                    "challenge_name": "Intel Guardian",
+                    "challenge_id": "intel-guardian",
+                    "week": "1",
+                    "difficulty": "Medium",
+                    "points": 50,
+                    "total_attempts": 15,
+                    "total_completions": 8,
+                    "success_rate": 53.3,
+                    "users_attempted": 10,
+                    "users_completed": 8,
+                    "users_not_started": 5,
+                    "avg_messages_to_complete": 12.5,
+                    "avg_attempts_to_complete": 1.8,
+                    "participants": [
+                        {
+                            "user_id": "abc123",
+                            "user_name": "John Doe",
+                            "email": "john@example.com",
+                            "status": "Completed",
+                            "num_attempts": 2,
+                            "num_messages": 15,
+                            "first_attempt_time": 1234567890,
+                            "completed_time": 1234567900
+                        }
+                    ]
+                }
+            ]
+        }
+    """
+    try:
+        return build_challenges_response()
+    except HTTPException as exc:
+        raise exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

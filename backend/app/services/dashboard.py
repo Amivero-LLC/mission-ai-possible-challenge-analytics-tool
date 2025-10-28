@@ -21,7 +21,10 @@ if str(PROJECT_ROOT) not in sys.path:
 from .mission_analyzer import DATA_DIR, MissionAnalyzer, find_latest_export  # noqa: E402
 
 from ..schemas import (
+    ChallengeAttempt,
     ChallengeResultEntry,
+    ChallengesResponse,
+    ChallengeWithUsers,
     ChatMessage,
     ChatPreview,
     DashboardResponse,
@@ -30,6 +33,9 @@ from ..schemas import (
     SortOption,
     Summary,
     UserChallengeExportRow,
+    UserParticipation,
+    UsersResponse,
+    UserWithChallenges,
 )
 
 
@@ -1172,4 +1178,423 @@ def build_dashboard_response(
         all_chats=chats,
         challenge_results=challenge_results,
         export_data=export_data,
+    )
+
+
+def build_users_response() -> UsersResponse:
+    """
+    Build a response with all users and their challenge participation details.
+
+    Returns:
+        UsersResponse: Contains a list of users with their attempted/completed challenges.
+    """
+    # Load model metadata and user information
+    model_lookup, mission_model_aliases, alias_to_primary, week_mapping, points_mapping, difficulty_mapping = _load_model_metadata()
+
+    # Load chats
+    remote_chats = _load_chats_json()
+    if remote_chats is None:
+        # Try to fetch from API if no cache
+        remote_chats = _fetch_remote_chats()
+        if remote_chats is None:
+            # Fall back to export files
+            latest_export = find_latest_export()
+            if not latest_export:
+                raise HTTPException(
+                    status_code=503,
+                    detail="No data available. Please configure Open WebUI API credentials or place a chat export in the data directory."
+                )
+            with open(latest_export, 'r', encoding='utf-8') as f:
+                remote_chats = json.load(f)
+
+    # Filter to mission chats
+    filtered_chats = _filter_chats_by_mission_models(remote_chats, mission_model_aliases)
+
+    # Get user info
+    remote_users = _fetch_remote_users()
+    if remote_users is None:
+        remote_users = _read_cached_users() or {}
+
+    user_info_map = remote_users
+    user_names_only = {uid: info["name"] for uid, info in remote_users.items()}
+
+    # Initialize analyzer
+    analyzer = MissionAnalyzer(
+        json_file=None,
+        data=filtered_chats,
+        user_names=user_names_only,
+        model_lookup=model_lookup,
+        mission_model_aliases=mission_model_aliases,
+        model_alias_to_primary=alias_to_primary,
+        week_mapping=week_mapping,
+        points_mapping=points_mapping,
+        difficulty_mapping=difficulty_mapping,
+        verbose=False,
+    )
+
+    # Analyze missions without filters
+    analyzer.analyze_missions()
+
+    # Get all users
+    all_users = set()
+    for item in analyzer.data:
+        user_id = item.get("user_id", "Unknown")
+        if user_id and user_id != "Unknown":
+            all_users.add(user_id)
+
+    # Get all missions
+    all_missions = []
+    seen_missions = {}  # mission_display_name -> {alias, primary_id}
+    for alias in mission_model_aliases:
+        display_name = model_lookup.get(alias, alias)
+        primary_id = alias_to_primary.get(alias, alias)
+        if display_name not in seen_missions:
+            seen_missions[display_name] = {
+                "alias": alias,
+                "primary_id": primary_id
+            }
+            all_missions.append(display_name)
+
+    # Build user data
+    users_list = []
+    for user_id in sorted(all_users):
+        user_info = user_info_map.get(user_id, {"name": analyzer.get_user_name(user_id), "email": ""})
+        user_name = user_info.get("name", analyzer.get_user_name(user_id))
+        user_email = user_info.get("email", "")
+
+        challenges = []
+        total_attempts = 0
+        total_completions = 0
+        total_points = 0
+
+        for challenge_name in all_missions:
+            mission_info = seen_missions[challenge_name]
+            alias = mission_info["alias"]
+            primary_id = mission_info["primary_id"]
+
+            # Get user attempts for this challenge
+            user_attempts = []
+            for chat in analyzer.mission_chats:
+                if chat["user_id"] != user_id:
+                    continue
+                if analyzer._mission_matches_filter(chat["model"], challenge_name):
+                    user_attempts.append(chat)
+
+            # Calculate metrics
+            if not user_attempts:
+                status = "Not Started"
+                num_attempts = 0
+                num_messages = 0
+                first_attempt_time = None
+                completed_time = None
+                points_earned = 0
+            else:
+                user_attempts.sort(key=lambda x: x.get("created_at") or 0)
+                completed_attempts = [a for a in user_attempts if a["completed"]]
+
+                if completed_attempts:
+                    status = "Completed"
+                    first_completion = completed_attempts[0]
+                    completed_idx = user_attempts.index(first_completion)
+                    num_attempts = completed_idx + 1
+                    num_messages = sum(
+                        a.get("user_message_count", analyzer._count_user_messages(a.get("messages", [])))
+                        for a in user_attempts[:num_attempts]
+                    )
+                    first_attempt_time = user_attempts[0].get("created_at")
+                    completed_time = first_completion.get("created_at")
+
+                    # Get points
+                    points = points_mapping.get(alias) or points_mapping.get(primary_id)
+                    if points is None:
+                        for key, val in points_mapping.items():
+                            if key.lower() == alias.lower() or key.lower() == primary_id.lower():
+                                points = val
+                                break
+                    points_earned = points if points is not None else 0
+                    total_completions += 1
+                    total_points += points_earned
+                else:
+                    status = "Attempted"
+                    num_attempts = len(user_attempts)
+                    num_messages = sum(
+                        a.get("user_message_count", analyzer._count_user_messages(a.get("messages", [])))
+                        for a in user_attempts
+                    )
+                    first_attempt_time = user_attempts[0].get("created_at")
+                    completed_time = None
+                    points_earned = 0
+
+                total_attempts += num_attempts
+
+            # Get metadata
+            week = week_mapping.get(alias) or week_mapping.get(primary_id) or ""
+            if not week:
+                for key, val in week_mapping.items():
+                    if key.lower() == alias.lower() or key.lower() == primary_id.lower():
+                        week = val
+                        break
+
+            difficulty = difficulty_mapping.get(alias) or difficulty_mapping.get(primary_id) or ""
+            if not difficulty:
+                for key, val in difficulty_mapping.items():
+                    if key.lower() == alias.lower() or key.lower() == primary_id.lower():
+                        difficulty = val
+                        break
+
+            points = points_mapping.get(alias) or points_mapping.get(primary_id) or 0
+            if points == 0:
+                for key, val in points_mapping.items():
+                    if key.lower() == alias.lower() or key.lower() == primary_id.lower():
+                        points = val
+                        break
+
+            challenges.append(ChallengeAttempt(
+                challenge_name=challenge_name,
+                challenge_id=primary_id,
+                week=str(week) if week else "",
+                difficulty=str(difficulty) if difficulty else "",
+                points=int(points) if points else 0,
+                status=status,
+                num_attempts=num_attempts,
+                num_messages=num_messages,
+                first_attempt_time=first_attempt_time,
+                completed_time=completed_time,
+            ))
+
+        efficiency = (total_completions / total_attempts * 100) if total_attempts > 0 else 0.0
+
+        users_list.append(UserWithChallenges(
+            user_id=user_id,
+            user_name=user_name,
+            email=user_email,
+            total_attempts=total_attempts,
+            total_completions=total_completions,
+            total_points=total_points,
+            efficiency=efficiency,
+            challenges=challenges,
+        ))
+
+    return UsersResponse(
+        generated_at=datetime.now(timezone.utc),
+        users=users_list,
+    )
+
+
+def build_challenges_response() -> ChallengesResponse:
+    """
+    Build a response with all challenges and their participant details.
+
+    Returns:
+        ChallengesResponse: Contains a list of challenges with users who attempted/completed them.
+    """
+    # Load model metadata and user information
+    model_lookup, mission_model_aliases, alias_to_primary, week_mapping, points_mapping, difficulty_mapping = _load_model_metadata()
+
+    # Load chats
+    remote_chats = _load_chats_json()
+    if remote_chats is None:
+        # Try to fetch from API if no cache
+        remote_chats = _fetch_remote_chats()
+        if remote_chats is None:
+            # Fall back to export files
+            latest_export = find_latest_export()
+            if not latest_export:
+                raise HTTPException(
+                    status_code=503,
+                    detail="No data available. Please configure Open WebUI API credentials or place a chat export in the data directory."
+                )
+            with open(latest_export, 'r', encoding='utf-8') as f:
+                remote_chats = json.load(f)
+
+    # Filter to mission chats
+    filtered_chats = _filter_chats_by_mission_models(remote_chats, mission_model_aliases)
+
+    # Get user info
+    remote_users = _fetch_remote_users()
+    if remote_users is None:
+        remote_users = _read_cached_users() or {}
+
+    user_info_map = remote_users
+    user_names_only = {uid: info["name"] for uid, info in remote_users.items()}
+
+    # Initialize analyzer
+    analyzer = MissionAnalyzer(
+        json_file=None,
+        data=filtered_chats,
+        user_names=user_names_only,
+        model_lookup=model_lookup,
+        mission_model_aliases=mission_model_aliases,
+        model_alias_to_primary=alias_to_primary,
+        week_mapping=week_mapping,
+        points_mapping=points_mapping,
+        difficulty_mapping=difficulty_mapping,
+        verbose=False,
+    )
+
+    # Analyze missions without filters
+    analyzer.analyze_missions()
+
+    # Get all users
+    all_users = set()
+    for item in analyzer.data:
+        user_id = item.get("user_id", "Unknown")
+        if user_id and user_id != "Unknown":
+            all_users.add(user_id)
+
+    total_users = len(all_users)
+
+    # Get all missions
+    all_missions = []
+    seen_missions = {}  # mission_display_name -> {alias, primary_id}
+    for alias in mission_model_aliases:
+        display_name = model_lookup.get(alias, alias)
+        primary_id = alias_to_primary.get(alias, alias)
+        if display_name not in seen_missions:
+            seen_missions[display_name] = {
+                "alias": alias,
+                "primary_id": primary_id
+            }
+            all_missions.append(display_name)
+
+    # Build challenge data
+    challenges_list = []
+    for challenge_name in all_missions:
+        mission_info = seen_missions[challenge_name]
+        alias = mission_info["alias"]
+        primary_id = mission_info["primary_id"]
+
+        # Get metadata
+        week = week_mapping.get(alias) or week_mapping.get(primary_id) or ""
+        if not week:
+            for key, val in week_mapping.items():
+                if key.lower() == alias.lower() or key.lower() == primary_id.lower():
+                    week = val
+                    break
+
+        difficulty = difficulty_mapping.get(alias) or difficulty_mapping.get(primary_id) or ""
+        if not difficulty:
+            for key, val in difficulty_mapping.items():
+                if key.lower() == alias.lower() or key.lower() == primary_id.lower():
+                    difficulty = val
+                    break
+
+        points = points_mapping.get(alias) or points_mapping.get(primary_id) or 0
+        if points == 0:
+            for key, val in points_mapping.items():
+                if key.lower() == alias.lower() or key.lower() == primary_id.lower():
+                    points = val
+                    break
+
+        # Track participants
+        participants = []
+        users_attempted_set = set()
+        users_completed_set = set()
+        total_attempts = 0
+        total_completions = 0
+        completion_data = []  # For calculating averages
+
+        for user_id in all_users:
+            user_info = user_info_map.get(user_id, {"name": analyzer.get_user_name(user_id), "email": ""})
+            user_name = user_info.get("name", analyzer.get_user_name(user_id))
+            user_email = user_info.get("email", "")
+
+            # Get user attempts for this challenge
+            user_attempts = []
+            for chat in analyzer.mission_chats:
+                if chat["user_id"] != user_id:
+                    continue
+                if analyzer._mission_matches_filter(chat["model"], challenge_name):
+                    user_attempts.append(chat)
+
+            # Calculate metrics
+            if not user_attempts:
+                participants.append(UserParticipation(
+                    user_id=user_id,
+                    user_name=user_name,
+                    email=user_email,
+                    status="Not Started",
+                    num_attempts=0,
+                    num_messages=0,
+                    first_attempt_time=None,
+                    completed_time=None,
+                ))
+            else:
+                user_attempts.sort(key=lambda x: x.get("created_at") or 0)
+                completed_attempts = [a for a in user_attempts if a["completed"]]
+                users_attempted_set.add(user_id)
+
+                if completed_attempts:
+                    status = "Completed"
+                    first_completion = completed_attempts[0]
+                    completed_idx = user_attempts.index(first_completion)
+                    num_attempts = completed_idx + 1
+                    num_messages = sum(
+                        a.get("user_message_count", analyzer._count_user_messages(a.get("messages", [])))
+                        for a in user_attempts[:num_attempts]
+                    )
+                    first_attempt_time = user_attempts[0].get("created_at")
+                    completed_time = first_completion.get("created_at")
+
+                    users_completed_set.add(user_id)
+                    total_completions += 1
+                    completion_data.append({
+                        "num_attempts": num_attempts,
+                        "num_messages": num_messages
+                    })
+                else:
+                    status = "Attempted"
+                    num_attempts = len(user_attempts)
+                    num_messages = sum(
+                        a.get("user_message_count", analyzer._count_user_messages(a.get("messages", [])))
+                        for a in user_attempts
+                    )
+                    first_attempt_time = user_attempts[0].get("created_at")
+                    completed_time = None
+
+                total_attempts += num_attempts
+
+                participants.append(UserParticipation(
+                    user_id=user_id,
+                    user_name=user_name,
+                    email=user_email,
+                    status=status,
+                    num_attempts=num_attempts,
+                    num_messages=num_messages,
+                    first_attempt_time=first_attempt_time,
+                    completed_time=completed_time,
+                ))
+
+        # Calculate averages
+        avg_messages_to_complete = 0.0
+        avg_attempts_to_complete = 0.0
+        if completion_data:
+            avg_messages_to_complete = sum(d["num_messages"] for d in completion_data) / len(completion_data)
+            avg_attempts_to_complete = sum(d["num_attempts"] for d in completion_data) / len(completion_data)
+
+        success_rate = (total_completions / total_attempts * 100) if total_attempts > 0 else 0.0
+        users_attempted = len(users_attempted_set)
+        users_completed = len(users_completed_set)
+        users_not_started = total_users - users_attempted
+
+        challenges_list.append(ChallengeWithUsers(
+            challenge_name=challenge_name,
+            challenge_id=primary_id,
+            week=str(week) if week else "",
+            difficulty=str(difficulty) if difficulty else "",
+            points=int(points) if points else 0,
+            total_attempts=total_attempts,
+            total_completions=total_completions,
+            success_rate=success_rate,
+            users_attempted=users_attempted,
+            users_completed=users_completed,
+            users_not_started=users_not_started,
+            avg_messages_to_complete=avg_messages_to_complete,
+            avg_attempts_to_complete=avg_attempts_to_complete,
+            participants=participants,
+        ))
+
+    return ChallengesResponse(
+        generated_at=datetime.now(timezone.utc),
+        challenges=challenges_list,
     )

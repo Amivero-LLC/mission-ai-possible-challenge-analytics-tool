@@ -6,8 +6,9 @@ Mission Challenge Analytics is a two-service stack that exposes AI mission telem
 
 - `backend/` – FastAPI application (`backend/app/main.py`) and service layer
 - `frontend/` – Next.js 14 dashboard written in TypeScript
-- `data/` – Chat exports and optional `user_names.json` mapping
-- `scripts/` – Helper scripts for setting up environments and starting the stack
+- `data/` – Chat exports, required CSV files, and optional `user_names.json` mapping
+- `exports/` – Generated reports (not tracked in git)
+- `scripts/` – Helper scripts for setting up environments and credit comparison
 - `docs/` – Operations guides, deployment notes, and legacy instructions
 - `archive/` – Historical CLI utilities and static dashboard generator retained for reference
 
@@ -157,11 +158,103 @@ Frontend:
 
 The provided `.env.example` captures the common variables for local development.
 
+## API Endpoints
+
+The FastAPI backend provides the following endpoints:
+
+### Core Endpoints
+- `GET /health` - Health check endpoint
+- `GET /dashboard` - Main dashboard data with filtering options
+- `POST /refresh` - Force refresh data from Open WebUI API
+
+### User & Challenge Endpoints
+- `GET /users` - List all users with their attempted/completed challenges
+  - Returns detailed challenge participation for each user
+  - Includes total attempts, completions, points, and efficiency metrics
+- `GET /challenges` - List all challenges with participant details
+  - Returns aggregate statistics and per-user participation
+  - Includes success rates, completion metrics, and user breakdowns
+
+### API Documentation
+Interactive API documentation is available at:
+- **Swagger UI**: http://localhost:8000/docs
+- **ReDoc**: http://localhost:8000/redoc
+
+## Missing Credit Report
+
+The `scripts/missing_credit_report.py` script compares completed challenges (from the API) with awarded credits from SharePoint to identify participants who haven't received credit for their work. It automatically checks if cached data is stale (>1 hour old) and refreshes it before running the comparison.
+
+### Features
+- **Automatic Data Refresh**: Checks data age and auto-refreshes if stale (>1 hour old)
+- **Smart Caching**: Uses cached data when fresh to minimize API calls
+- **Graceful Fallback**: Works with cached data if Open WebUI credentials aren't configured
+- **Console Table Output**: Displays detailed missing credit table with week numbers
+- **Excel Reports**: Generates comprehensive Excel reports for follow-up
+
+### Requirements
+1. **Running API Server**: Start the backend on port 8000 (local or Docker)
+   ```bash
+   # Local
+   uvicorn backend.app.main:app --reload
+
+   # Docker
+   docker compose up -d
+   ```
+
+2. **Required Data File**: Place `SubmittedActivityList.csv` in the `data/` folder
+   - Must include columns: `Email`, `MissionChallenge`, `ActivityStatus`, `PointsAwarded`
+   - This file contains the awarded credit records from SharePoint
+   - See `data/README.md` for detailed format requirements
+
+3. **Environment Configuration**: Set `API_BASE_URL` in `.env`
+   - For local development: `API_BASE_URL=http://localhost:8000`
+   - For Docker: `API_BASE_URL=http://backend:8000`
+
+4. **Optional**: Configure `OPEN_WEBUI_HOSTNAME` and `OPEN_WEBUI_API_KEY` for automatic data refresh from live OpenWebUI
+
+### Usage
+```bash
+python scripts/missing_credit_report.py
+```
+
+### Output
+
+#### Console Output
+The script displays a detailed table showing all missing credits:
+```
+==========================================================================================
+DETAILED MISSING CREDIT REPORT
+==========================================================================================
+
+Name                      Email                          Week   Challenge                           Points
+------------------------- ------------------------------ ------ ----------------------------------- ----------
+Crystal Carter            ccarter@amivero.com            1      Intel Guardian                      20
+Daniel Ruggiero           druggiero@amivero.com          1      Prompt Qualification                15
+David Larrimore           dlarrimore@amivero.com         3      Broken Compass                      20
+------------------------------------------------------------------------------------------
+Total missing credit: 9 challenges
+```
+
+#### Excel Reports
+Reports are generated in the `exports/` folder (not tracked in git):
+- `exports/combined_report.xlsx` - Full comparison report with all participants
+- `exports/missing_credit_report.xlsx` - Filtered view of only missing credits
+
+#### Summary Statistics
+The script also displays:
+- ✓ Data freshness check (e.g., "✓ Data is fresh (15.3 minutes old)")
+- 🔄 Automatic refresh status if data is stale
+- 📊 Overall credit rate percentage
+- 👥 List of unique users with missing credits
+- ⚠️ Detailed breakdown of each missing credit
+
+See `scripts/README.md` for detailed usage instructions and troubleshooting.
+
 ## Development Notes
 
 - Backend dependencies live in `backend/requirements.txt`. Add new packages there and rebuild the virtual environment or compose image.
 - Frontend tooling is configured via `frontend/package.json`; standard `npm run build` and `npm run lint` commands are available.
-- The FastAPI service returns a single dashboard payload (`/dashboard`) plus `/health` for readiness checks.
+- The FastAPI service provides multiple endpoints for dashboard data, user analytics, and challenge statistics.
 - Mission analytics logic resides in `backend/app/services/mission_analyzer.py` and is shared by both live and archived workflows.
 
 ## Legacy CLI

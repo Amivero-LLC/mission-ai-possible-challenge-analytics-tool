@@ -53,6 +53,10 @@ data/*.xlsx
 !data/.gitkeep
 !data/README.md
 
+# Exclude generated reports (these are created by scripts/combine.py)
+exports/*
+!exports/.gitkeep
+
 ##########################
 # Node / frontend artifacts
 ##########################
