@@ -12,6 +12,8 @@ services:
     environment:
       - MISSION_DATA_FILE=${MISSION_DATA_FILE:-}
       - MISSION_USER_NAMES_FILE=${MISSION_USER_NAMES_FILE:-}
+      - OPEN_WEBUI_HOSTNAME=${OPEN_WEBUI_HOSTNAME:-}
+      - OPEN_WEBUI_API_KEY=${OPEN_WEBUI_API_KEY:-}
     env_file:
       - .env
 

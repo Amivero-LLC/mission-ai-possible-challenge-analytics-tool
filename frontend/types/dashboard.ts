@@ -95,6 +95,8 @@ export interface ChallengeResultEntry {
 
 export interface DashboardResponse {
   generated_at: string;
+  last_fetched?: string | null;
+  data_source?: string | null;
   summary: Summary;
   leaderboard: LeaderboardEntry[];
   mission_breakdown: MissionBreakdownEntry[];

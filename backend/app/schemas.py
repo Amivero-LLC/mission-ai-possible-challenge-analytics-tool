@@ -110,6 +110,8 @@ class UserChallengeExportRow(BaseModel):
 
 class DashboardResponse(BaseModel):
     generated_at: datetime
+    last_fetched: Optional[str] = None
+    data_source: Optional[str] = None
     summary: Summary
     leaderboard: List[LeaderboardEntry] = Field(default_factory=list)
     mission_breakdown: List[MissionBreakdownEntry] = Field(default_factory=list)

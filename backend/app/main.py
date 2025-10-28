@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
@@ -51,3 +52,38 @@ def get_dashboard(
         raise exc
     except Exception as exc:  # pragma: no cover - safety net for unexpected issues
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/refresh")
+def refresh_data() -> dict:
+    """
+    Force a refresh of data from Open WebUI API.
+
+    This endpoint requires OPEN_WEBUI_HOSTNAME and OPEN_WEBUI_API_KEY to be configured.
+    Returns the timestamp when data was last fetched.
+    """
+    hostname = os.getenv("OPEN_WEBUI_HOSTNAME") or os.getenv("OPEN_WEB_UI_HOSTNAME")
+    api_key = os.getenv("OPEN_WEBUI_API_KEY")
+
+    if not hostname or not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Open WebUI credentials not configured. Please set OPEN_WEBUI_HOSTNAME and OPEN_WEBUI_API_KEY environment variables."
+        )
+
+    try:
+        # Call build_dashboard_response with force_refresh=True to fetch fresh data
+        response = build_dashboard_response(
+            sort_by=SortOption.completions,
+            force_refresh=True
+        )
+        return {
+            "status": "success",
+            "message": "Data refreshed successfully",
+            "last_fetched": response.last_fetched,
+            "data_source": response.data_source
+        }
+    except HTTPException as exc:
+        raise exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to refresh data: {str(exc)}") from exc

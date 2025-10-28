@@ -83,3 +83,41 @@ export async function fetchDashboard(
 
   return response.json() as Promise<DashboardResponse>;
 }
+
+/**
+ * Trigger a manual refresh of data from Open WebUI API.
+ *
+ * Returns:
+ *   Promise<{status: string, message: string, last_fetched: string, data_source: string}>
+ *
+ * Errors:
+ *   - Throws an Error if the refresh fails or API credentials are not configured
+ *
+ * Side Effects:
+ *   - Issues an HTTP POST to `/refresh`
+ *   - Forces a fresh fetch from Open WebUI and saves to cache
+ *
+ * Example:
+ *   const result = await refreshData();
+ */
+export async function refreshData(): Promise<{
+  status: string;
+  message: string;
+  last_fetched: string;
+  data_source: string;
+}> {
+  const baseUrl = resolveBaseUrl();
+  const url = new URL("/refresh", baseUrl);
+
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Request failed with ${response.status}`);
+  }
+
+  return response.json();
+}

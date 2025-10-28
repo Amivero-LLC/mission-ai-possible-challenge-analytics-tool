@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import * as XLSX from "xlsx";
-import { fetchDashboard } from "../lib/api";
+import { fetchDashboard, refreshData } from "../lib/api";
 import type { DashboardResponse, SortOption } from "../types/dashboard";
 
 type TabKey = "overview" | "challengeresults" | "allchats" | "missions";
@@ -164,6 +164,8 @@ export default function DashboardContent({ initialData }: Props) {
   const [filters, setFilters] = useState<FilterState>(defaultFilters);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
 
   // Challenge Results sorting state
   type ChallengeResultSortKey = "user_name" | "status" | "num_attempts" | "first_attempt_time" | "completed_time" | "num_messages";
@@ -244,6 +246,36 @@ export default function DashboardContent({ initialData }: Props) {
       setError(err instanceof Error ? err.message : "Unable to load dashboard data.");
     } finally {
       setLoading(false);
+    }
+  }, [filters]);
+
+  /**
+   * Manually refresh data from Open WebUI API.
+   *
+   * This triggers a fresh fetch from the Open WebUI API and updates the local cache.
+   */
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    setRefreshMessage(null);
+    setError(null);
+    try {
+      const result = await refreshData();
+      setRefreshMessage("Data refreshed successfully!");
+      // After refresh, reload the dashboard with current filters
+      const data = await fetchDashboard({
+        sort_by: "completions",
+        week: filters.week || undefined,
+        challenge: filters.challenge || undefined,
+        user_id: filters.user || undefined,
+        status: filters.status || undefined,
+      });
+      setDashboard(data);
+      // Clear success message after 3 seconds
+      setTimeout(() => setRefreshMessage(null), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to refresh data from Open WebUI.");
+    } finally {
+      setRefreshing(false);
     }
   }, [filters]);
 
@@ -583,9 +615,48 @@ export default function DashboardContent({ initialData }: Props) {
       <header className="dashboard-header">
         <h1>Amivero&apos;s Mission: AI Possible</h1>
         <p className="dashboard-subtitle">🎯 Mission Challenge Dashboard</p>
-        <p className="dashboard-timestamp">
-          Last Updated: {formatDateTime(dashboard.generated_at)}
-        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap", justifyContent: "center" }}>
+          <p className="dashboard-timestamp">
+            Last Updated: {formatDateTime(dashboard.generated_at)}
+          </p>
+          {dashboard.last_fetched && (
+            <p className="dashboard-timestamp" style={{ fontSize: "0.9rem", opacity: 0.8 }}>
+              Data Fetched: {formatDateTime(dashboard.last_fetched)} ({dashboard.data_source === "api" ? "API" : "File"})
+            </p>
+          )}
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            style={{
+              padding: "0.5rem 1rem",
+              backgroundColor: refreshing ? "#95a5a6" : "#3498db",
+              color: "white",
+              border: "none",
+              borderRadius: "4px",
+              cursor: refreshing ? "not-allowed" : "pointer",
+              fontSize: "0.9rem",
+              fontWeight: "500",
+              transition: "background-color 0.2s",
+            }}
+            onMouseEnter={(e) => {
+              if (!refreshing) {
+                e.currentTarget.style.backgroundColor = "#2980b9";
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!refreshing) {
+                e.currentTarget.style.backgroundColor = "#3498db";
+              }
+            }}
+          >
+            {refreshing ? "⏳ Refreshing..." : "🔄 Refresh Data"}
+          </button>
+        </div>
+        {refreshMessage && (
+          <p style={{ color: "#27ae60", fontSize: "0.9rem", marginTop: "0.5rem" }}>
+            ✓ {refreshMessage}
+          </p>
+        )}
       </header>
 
       <section className="stats-grid">
