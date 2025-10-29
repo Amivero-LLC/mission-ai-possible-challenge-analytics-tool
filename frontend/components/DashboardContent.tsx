@@ -33,6 +33,8 @@ const defaultFilters: FilterState = {
 
 interface Props {
   initialData: DashboardResponse;
+  setExportCallbacks?: (callbacks: { onExportCSV: () => void; onExportExcel: () => void }) => void;
+  setHeaderLoading?: (loading: boolean) => void;
 }
 
 /**
@@ -158,7 +160,7 @@ function formatChatPreview(content: DashboardResponse["all_chats"][number]["mess
  * Side Effects:
  *   - Invokes `fetchDashboard` on filter changes, reading from the FastAPI backend.
  */
-export default function DashboardContent({ initialData }: Props) {
+export default function DashboardContent({ initialData, setExportCallbacks, setHeaderLoading }: Props) {
   const [dashboard, setDashboard] = useState<DashboardResponse>(initialData);
   const [activeTab, setActiveTab] = useState<TabKey>("overview");
   const [filters, setFilters] = useState<FilterState>(defaultFilters);
@@ -166,10 +168,11 @@ export default function DashboardContent({ initialData }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
 
   // Challenge Results sorting state
   type ChallengeResultSortKey = "user_name" | "status" | "num_attempts" | "first_attempt_time" | "completed_time" | "num_messages";
-  const [challengeResultSortKey, setChallengeResultSortKey] = useState<ChallengeResultSortKey>("status");
+  const [challengeResultSortKey, setChallengeResultSortKey] = useState<ChallengeResultSortKey>("user_name");
   const [challengeResultSortAsc, setChallengeResultSortAsc] = useState(true);
 
   // Leaderboard sorting state
@@ -363,6 +366,27 @@ export default function DashboardContent({ initialData }: Props) {
     // Download
     XLSX.writeFile(workbook, "user_challenge_export.xlsx");
   }, [dashboard]);
+
+  /**
+   * Provide export callbacks to header
+   */
+  useEffect(() => {
+    if (setExportCallbacks) {
+      setExportCallbacks({
+        onExportCSV: exportToCSV,
+        onExportExcel: exportToExcel,
+      });
+    }
+  }, [setExportCallbacks, exportToCSV, exportToExcel]);
+
+  /**
+   * Sync loading state with header
+   */
+  useEffect(() => {
+    if (setHeaderLoading) {
+      setHeaderLoading(loading);
+    }
+  }, [loading, setHeaderLoading]);
 
   /**
    * Sort challenge results based on the current sort key and direction
@@ -612,79 +636,107 @@ export default function DashboardContent({ initialData }: Props) {
         </>
       )}
 
-      <header className="dashboard-header">
-        <h1>Amivero&apos;s Mission: AI Possible</h1>
-        <p className="dashboard-subtitle">🎯 Mission Challenge Dashboard</p>
-        <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap", justifyContent: "center" }}>
-          <p className="dashboard-timestamp">
-            Last Updated: {formatDateTime(dashboard.generated_at)}
-          </p>
-          {dashboard.last_fetched && (
-            <p className="dashboard-timestamp" style={{ fontSize: "0.9rem", opacity: 0.8 }}>
-              Data Fetched: {formatDateTime(dashboard.last_fetched)} ({dashboard.data_source === "api" ? "API" : "File"})
+      {/* Collapsible Sidebar */}
+      <div
+        style={{
+          position: "fixed",
+          bottom: "20px",
+          right: sidebarCollapsed ? "-280px" : "20px",
+          width: "280px",
+          backgroundColor: "#ffffff",
+          border: "1px solid #e5e7eb",
+          borderRadius: "8px",
+          boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
+          zIndex: 1000,
+          transition: "right 0.3s ease-in-out",
+        }}
+      >
+        {/* Toggle Button */}
+        <button
+          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+          style={{
+            position: "absolute",
+            left: "-40px",
+            top: "50%",
+            transform: "translateY(-50%)",
+            width: "40px",
+            height: "40px",
+            backgroundColor: "#ffffff",
+            border: "1px solid #e5e7eb",
+            borderRight: "none",
+            borderTopLeftRadius: "8px",
+            borderBottomLeftRadius: "8px",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: "1.2rem",
+            boxShadow: "-2px 2px 4px rgba(0, 0, 0, 0.05)",
+          }}
+        >
+          {sidebarCollapsed ? "◀" : "▶"}
+        </button>
+
+        {/* Sidebar Content */}
+        <div style={{ padding: "1.5rem" }}>
+          <h3 style={{ margin: "0 0 1rem 0", fontSize: "1rem", fontWeight: "600", color: "#1f2937" }}>
+            Data Status
+          </h3>
+
+          <div style={{ marginBottom: "1rem" }}>
+            <p style={{ fontSize: "0.75rem", fontWeight: "600", color: "#6b7280", marginBottom: "0.25rem" }}>
+              Last Updated
             </p>
+            <p style={{ fontSize: "0.85rem", color: "#1f2937" }}>
+              {formatDateTime(dashboard.generated_at)}
+            </p>
+          </div>
+
+          {dashboard.last_fetched && (
+            <div style={{ marginBottom: "1.5rem" }}>
+              <p style={{ fontSize: "0.75rem", fontWeight: "600", color: "#6b7280", marginBottom: "0.25rem" }}>
+                Data Fetched
+              </p>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <p style={{ fontSize: "0.85rem", color: "#1f2937", margin: 0 }}>
+                  {formatDateTime(dashboard.last_fetched)}
+                </p>
+                <span style={{ padding: "2px 8px", background: "rgba(102, 126, 234, 0.1)", borderRadius: "4px", fontSize: "0.7rem", fontWeight: "500" }}>
+                  {dashboard.data_source === "api" ? "API" : "File"}
+                </span>
+              </div>
+            </div>
           )}
+
           <button
             onClick={handleRefresh}
             disabled={refreshing}
+            className="filter-button"
             style={{
-              padding: "0.5rem 1rem",
-              backgroundColor: refreshing ? "#95a5a6" : "#3498db",
-              color: "white",
-              border: "none",
-              borderRadius: "4px",
-              cursor: refreshing ? "not-allowed" : "pointer",
+              width: "100%",
+              margin: 0,
+              padding: "0.75rem",
               fontSize: "0.9rem",
-              fontWeight: "500",
-              transition: "background-color 0.2s",
-            }}
-            onMouseEnter={(e) => {
-              if (!refreshing) {
-                e.currentTarget.style.backgroundColor = "#2980b9";
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (!refreshing) {
-                e.currentTarget.style.backgroundColor = "#3498db";
-              }
             }}
           >
             {refreshing ? "⏳ Refreshing..." : "🔄 Refresh Data"}
           </button>
-        </div>
-        {refreshMessage && (
-          <p style={{ color: "#27ae60", fontSize: "0.9rem", marginTop: "0.5rem" }}>
-            ✓ {refreshMessage}
-          </p>
-        )}
-      </header>
 
-      <section className="stats-grid">
-        <article className="stat-card">
-          <p className="stat-label">Total Chats</p>
-          <p className="stat-value">{formatNumber(dashboard.summary.total_chats)}</p>
-          <p className="stat-sublabel">In System</p>
-        </article>
-        <article className="stat-card">
-          <p className="stat-label">Mission Attempts</p>
-          <p className="stat-value">{formatNumber(dashboard.summary.mission_attempts)}</p>
-          <p className="stat-sublabel">Across All Missions</p>
-        </article>
-        <article className="stat-card">
-          <p className="stat-label">Completions</p>
-          <p className="stat-value">{formatNumber(dashboard.summary.mission_completions)}</p>
-          <p className="stat-sublabel">
-            {formatPercent(dashboard.summary.success_rate)} Success Rate
-          </p>
-        </article>
-        <article className="stat-card">
-          <p className="stat-label">Participants</p>
-          <p className="stat-value">{formatNumber(dashboard.summary.unique_users)}</p>
-          <p className="stat-sublabel">
-            {formatPercent(dashboard.summary.participation_rate)} Participation
-          </p>
-        </article>
-      </section>
+          {refreshMessage && (
+            <p style={{
+              color: "#10b981",
+              fontSize: "0.8rem",
+              marginTop: "0.75rem",
+              padding: "8px 12px",
+              background: "#d1fae5",
+              borderRadius: "6px",
+              margin: "0.75rem 0 0 0",
+            }}>
+              ✓ {refreshMessage}
+            </p>
+          )}
+        </div>
+      </div>
 
       <section className="filters-panel">
         <div className="filter-group">
@@ -779,30 +831,31 @@ export default function DashboardContent({ initialData }: Props) {
         </div>
       </section>
 
-      <section className="filters-panel" style={{ marginTop: "1rem" }}>
-        <h3 style={{ marginBottom: "1rem", fontSize: "1.1rem", fontWeight: "600" }}>
-          Export Results
-        </h3>
-        <div className="filter-actions">
-          <button
-            className="filter-button secondary"
-            onClick={exportToCSV}
-            disabled={loading}
-            type="button"
-            title="Export current tab to CSV"
-          >
-            📥 CSV
-          </button>
-          <button
-            className="filter-button secondary"
-            onClick={exportToExcel}
-            disabled={loading}
-            type="button"
-            title="Export current tab to Excel"
-          >
-            📥 Excel
-          </button>
-        </div>
+      <section className="stats-grid">
+        <article className="stat-card">
+          <p className="stat-label">Total Chats</p>
+          <p className="stat-value">{formatNumber(dashboard.summary.total_chats)}</p>
+          <p className="stat-sublabel">In System</p>
+        </article>
+        <article className="stat-card">
+          <p className="stat-label">Mission Attempts</p>
+          <p className="stat-value">{formatNumber(dashboard.summary.mission_attempts)}</p>
+          <p className="stat-sublabel">Across All Missions</p>
+        </article>
+        <article className="stat-card">
+          <p className="stat-label">Completions</p>
+          <p className="stat-value">{formatNumber(dashboard.summary.mission_completions)}</p>
+          <p className="stat-sublabel">
+            {formatPercent(dashboard.summary.success_rate)} Success Rate
+          </p>
+        </article>
+        <article className="stat-card">
+          <p className="stat-label">Participants</p>
+          <p className="stat-value">{formatNumber(dashboard.summary.unique_users)}</p>
+          <p className="stat-sublabel">
+            {formatPercent(dashboard.summary.participation_rate)} Participation
+          </p>
+        </article>
       </section>
 
       {error ? <div className="error-banner">{error}</div> : null}
@@ -1212,7 +1265,18 @@ export default function DashboardContent({ initialData }: Props) {
               {dashboard.mission_breakdown.length === 0 ? (
                 <p className="muted-text">No missions attempted yet.</p>
               ) : (
-                dashboard.mission_breakdown.map((mission) => (
+                [...dashboard.mission_breakdown]
+                  .sort((a, b) => {
+                    // Sort by week first
+                    const weekA = a.week || 999;
+                    const weekB = b.week || 999;
+                    if (weekA !== weekB) {
+                      return weekA - weekB;
+                    }
+                    // Then sort by mission name
+                    return a.mission.localeCompare(b.mission);
+                  })
+                  .map((mission) => (
                   <article key={mission.mission} className="mission-detail-card">
                     <header>
                       <h3>{mission.mission}</h3>
