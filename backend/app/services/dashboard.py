@@ -660,6 +660,40 @@ def _build_chat_previews(
     mission_lookup: Dict[int, Dict] = {chat["chat_num"]: chat for chat in analyzer.mission_chats}
     previews: List[ChatPreview] = []
     model_lookup = model_lookup or {}
+    week_lookup_lower = {str(key).lower(): str(value) for key, value in analyzer.week_mapping.items()}
+
+    def resolve_week_for_candidates(candidates: Iterable[Optional[str]]) -> Optional[str]:
+        seen: Set[str] = set()
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            candidate_str = str(candidate).strip()
+            if not candidate_str:
+                continue
+
+            potential_keys = [
+                candidate_str,
+                analyzer._resolve_alias(candidate_str),
+                analyzer._resolve_primary_identifier(candidate_str),
+            ]
+
+            for key in potential_keys:
+                if key is None:
+                    continue
+                key_str = str(key)
+                if key_str in seen:
+                    continue
+                seen.add(key_str)
+
+                direct_week = analyzer.week_mapping.get(key_str)
+                if direct_week:
+                    return str(direct_week)
+
+                lower_week = week_lookup_lower.get(key_str.lower())
+                if lower_week:
+                    return str(lower_week)
+
+        return None
 
     for index, item in enumerate(analyzer.data, start=1):
         chat = item.get("chat", {})
@@ -672,6 +706,9 @@ def _build_chat_previews(
         mission_chat = mission_lookup.get(index)
         is_mission = mission_chat is not None
         completed = mission_chat["completed"] if mission_chat else False
+        mission_week = None
+        mission_display_name = None
+        model_candidates: List[str] = []
 
         # Apply user filter
         if filter_user and user_id != filter_user:
@@ -708,6 +745,7 @@ def _build_chat_previews(
                 candidate_name = entry.get("name") or entry.get("display_name")
             if candidate_id:
                 raw_model = candidate_id
+                model_candidates.append(candidate_id)
                 display_model = model_lookup.get(candidate_id) or candidate_name or candidate_id
                 break
 
@@ -717,8 +755,26 @@ def _build_chat_previews(
                 candidate_name = msg.get("modelName") or msg.get("model_name")
                 if candidate:
                     raw_model = candidate
+                    model_candidates.append(candidate)
                     display_model = model_lookup.get(candidate) or candidate_name or candidate
                     break
+
+        if mission_chat:
+            mission_info = mission_chat.get("mission_info", {})
+            mission_week = mission_info.get("week")
+            mission_display_name = mission_info.get("mission_id") or display_model
+            mission_model = mission_chat.get("model")
+            if mission_model:
+                model_candidates.append(str(mission_model))
+        else:
+            mission_display_name = None
+
+        if raw_model and raw_model not in model_candidates:
+            model_candidates.append(str(raw_model))
+
+        resolved_week = resolve_week_for_candidates(model_candidates)
+        if resolved_week is not None:
+            mission_week = resolved_week
 
         previews.append(
             ChatPreview(
@@ -731,9 +787,15 @@ def _build_chat_previews(
                 message_count=len(messages),
                 is_mission=is_mission,
                 completed=completed,
+                week=mission_week,
+                challenge_name=mission_display_name,
                 messages=[
-                    ChatMessage(role=msg.get("role"), content=msg.get("content"))
-                    for msg in messages[:3]
+                    ChatMessage(
+                        role=msg.get("role"),
+                        content=msg.get("content"),
+                        timestamp=msg.get("timestamp") or msg.get("created_at") or msg.get("updated_at"),
+                    )
+                    for msg in messages
                 ],
             )
         )

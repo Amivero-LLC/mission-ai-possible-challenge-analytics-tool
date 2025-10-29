@@ -14,6 +14,8 @@ type FilterState = {
   status: string;
 };
 
+type ChatEntry = DashboardResponse["all_chats"][number];
+
 /**
  * UI tabs rendered by the dashboard. Keys align with conditional sections below.
  */
@@ -105,37 +107,34 @@ function formatDateTime(value: string) {
  *   string – Formatted date/time or "N/A" if unavailable.
  */
 function formatChatTimestamp(value?: string | number | null) {
-  if (!value) return "N/A";
-  
-  // If it's a Unix timestamp (number), convert to milliseconds
-  const timestamp = typeof value === "number" ? value * 1000 : value;
+  if (value === null || value === undefined || value === "") {
+    return "N/A";
+  }
+
+  let timestamp: string | number = value;
+  if (typeof value === "number") {
+    timestamp = value < 1e12 ? value * 1000 : value;
+  } else {
+    const numericValue = Number(value);
+    if (!Number.isNaN(numericValue) && numericValue > 0 && numericValue < 1e12) {
+      timestamp = numericValue * 1000;
+    }
+  }
+
   const date = new Date(timestamp);
-  
   if (Number.isNaN(date.valueOf())) {
     return "N/A";
   }
-  
-  return dateTimeFormatter.format(date);
-}
 
-/**
- * Creates a short inline preview of a chat by concatenating message snippets.
- *
- * Args:
- *   content (Array<{ role?: string | null; content?: string | null }>): Chat messages.
- *
- * Returns:
- *   string – Messages joined with separators, truncated to reduce table width.
- */
-function formatChatPreview(content: DashboardResponse["all_chats"][number]["messages"]) {
-  return content
-    .map(
-      (message) =>
-        `${message.role ?? "unknown"}: ${(message.content ?? "").slice(0, 120)}${
-          (message.content ?? "").length > 120 ? "…" : ""
-        }`,
-    )
-    .join(" • ");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  let hours = date.getHours();
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const amPm = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12 || 12;
+  const hourString = String(hours).padStart(2, "0");
+
+  return `${month}/${day} ${hourString}:${minutes} ${amPm}`;
 }
 
 /**
@@ -169,6 +168,7 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
+  const [selectedChat, setSelectedChat] = useState<ChatEntry | null>(null);
 
   // Challenge Results sorting state
   type ChallengeResultSortKey = "user_name" | "status" | "num_attempts" | "first_attempt_time" | "completed_time" | "num_messages";
@@ -181,8 +181,8 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
   const [leaderboardSortAsc, setLeaderboardSortAsc] = useState(false);
 
   // All Chats sorting state
-  type AllChatsSortKey = "num" | "title" | "user_name" | "model" | "created_at" | "message_count" | "is_mission";
-  const [allChatsSortKey, setAllChatsSortKey] = useState<AllChatsSortKey>("num");
+  type AllChatsSortKey = "num" | "week" | "user_name" | "challenge_name" | "created_at" | "message_count" | "completed";
+  const [allChatsSortKey, setAllChatsSortKey] = useState<AllChatsSortKey>("created_at");
   const [allChatsSortAsc, setAllChatsSortAsc] = useState(false);
 
   const handleFiltersChange = (key: keyof FilterState, value: string) => {
@@ -501,39 +501,92 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
     }
 
     const chats = [...dashboard.all_chats];
+    const direction = allChatsSortAsc ? 1 : -1;
+
+    const normalizeTimestamp = (value: ChatEntry["created_at"]) => {
+      if (value === null || value === undefined || value === "") {
+        return direction === 1 ? Number.MAX_SAFE_INTEGER : Number.MIN_SAFE_INTEGER;
+      }
+      if (typeof value === "number") {
+        return value < 1e12 ? value * 1000 : value;
+      }
+      const numericValue = Number(value);
+      if (!Number.isNaN(numericValue) && numericValue > 0) {
+        return numericValue < 1e12 ? numericValue * 1000 : numericValue;
+      }
+      const date = new Date(value);
+      if (Number.isNaN(date.valueOf())) {
+        return direction === 1 ? Number.MAX_SAFE_INTEGER : Number.MIN_SAFE_INTEGER;
+      }
+      return date.getTime();
+    };
 
     chats.sort((a, b) => {
-      let aVal: any;
-      let bVal: any;
+      switch (allChatsSortKey) {
+        case "week": {
+          const parseWeek = (value: typeof a.week) => {
+            if (value === null || value === undefined || value === "") {
+              return null;
+            }
+            const numericWeek = Number(value);
+            return Number.isNaN(numericWeek) ? null : numericWeek;
+          };
+          const aWeek = parseWeek(a.week);
+          const bWeek = parseWeek(b.week);
+          if (aWeek === null && bWeek === null) return 0;
+          if (aWeek === null) return 1;
+          if (bWeek === null) return -1;
+          return allChatsSortAsc ? aWeek - bWeek : bWeek - aWeek;
+        }
+        case "challenge_name": {
+          const aName = (a.challenge_name ?? "").toString().toLowerCase();
+          const bName = (b.challenge_name ?? "").toString().toLowerCase();
+          if (!aName && !bName) return 0;
+          if (!aName) return 1;
+          if (!bName) return -1;
+          return allChatsSortAsc ? aName.localeCompare(bName) : bName.localeCompare(aName);
+        }
+        case "created_at": {
+          const aTime = normalizeTimestamp(a.created_at);
+          const bTime = normalizeTimestamp(b.created_at);
+          if (aTime === bTime) {
+            return direction * (a.num - b.num);
+          }
+          return direction * (aTime - bTime);
+        }
+        case "completed": {
+          const aCompleted = a.completed ? 1 : 0;
+          const bCompleted = b.completed ? 1 : 0;
+          if (aCompleted === bCompleted) {
+            // Fall back to mission flag so completed missions sort ahead of regular chats.
+            if (a.is_mission !== b.is_mission) {
+              return direction * (a.is_mission ? -1 : 1);
+            }
+            return direction * (a.num - b.num);
+          }
+          return direction * (aCompleted - bCompleted);
+        }
+        default: {
+          let aVal: unknown = (a as Record<string, unknown>)[allChatsSortKey];
+          let bVal: unknown = (b as Record<string, unknown>)[allChatsSortKey];
 
-      // Handle special case for is_mission (mission status)
-      if (allChatsSortKey === "is_mission") {
-        aVal = a.is_mission ? (a.completed ? 2 : 1) : 0;
-        bVal = b.is_mission ? (b.completed ? 2 : 1) : 0;
-      } else {
-        aVal = a[allChatsSortKey];
-        bVal = b[allChatsSortKey];
+          if (aVal === null || aVal === undefined) aVal = "";
+          if (bVal === null || bVal === undefined) bVal = "";
+
+          if (typeof aVal === "string" || typeof bVal === "string") {
+            const aStr = aVal.toString().toLowerCase();
+            const bStr = bVal.toString().toLowerCase();
+            if (!aStr && !bStr) return 0;
+            if (!aStr) return 1;
+            if (!bStr) return -1;
+            return allChatsSortAsc ? aStr.localeCompare(bStr) : bStr.localeCompare(aStr);
+          }
+
+          const aNum = Number(aVal) || 0;
+          const bNum = Number(bVal) || 0;
+          return direction * (aNum - bNum);
+        }
       }
-
-      // Handle null/undefined values
-      if (aVal === null || aVal === undefined) aVal = "";
-      if (bVal === null || bVal === undefined) bVal = "";
-
-      // For timestamps, convert to numbers for proper sorting
-      if (allChatsSortKey === "created_at") {
-        aVal = typeof aVal === "number" ? aVal : (aVal ? new Date(aVal).getTime() : 0);
-        bVal = typeof bVal === "number" ? bVal : (bVal ? new Date(bVal).getTime() : 0);
-      }
-
-      // For strings, use locale compare
-      if (typeof aVal === "string" && typeof bVal === "string") {
-        return allChatsSortAsc
-          ? aVal.localeCompare(bVal)
-          : bVal.localeCompare(aVal);
-      }
-
-      // For numbers
-      return allChatsSortAsc ? aVal - bVal : bVal - aVal;
     });
 
     return chats;
@@ -551,6 +604,21 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
       setAllChatsSortKey(key);
       setAllChatsSortAsc(true);
     }
+  };
+
+  const openChatModal = (chat: ChatEntry) => {
+    setSelectedChat(chat);
+  };
+
+  const closeChatModal = () => {
+    setSelectedChat(null);
+  };
+
+  const getWeekDisplay = (week: ChatEntry["week"]) => {
+    if (week === null || week === undefined || week === "") {
+      return "—";
+    }
+    return week;
   };
 
   /**
@@ -1182,11 +1250,11 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                         # {allChatsSortKey === "num" && (allChatsSortAsc ? "↑" : "↓")}
                       </th>
                       <th
-                        onClick={() => handleAllChatsSort("title")}
+                        onClick={() => handleAllChatsSort("week")}
                         style={{ cursor: "pointer" }}
                         title="Click to sort"
                       >
-                        Title {allChatsSortKey === "title" && (allChatsSortAsc ? "↑" : "↓")}
+                        Week {allChatsSortKey === "week" && (allChatsSortAsc ? "↑" : "↓")}
                       </th>
                       <th
                         onClick={() => handleAllChatsSort("user_name")}
@@ -1196,18 +1264,18 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                         User {allChatsSortKey === "user_name" && (allChatsSortAsc ? "↑" : "↓")}
                       </th>
                       <th
-                        onClick={() => handleAllChatsSort("model")}
+                        onClick={() => handleAllChatsSort("challenge_name")}
                         style={{ cursor: "pointer" }}
                         title="Click to sort"
                       >
-                        Model {allChatsSortKey === "model" && (allChatsSortAsc ? "↑" : "↓")}
+                        Challenge {allChatsSortKey === "challenge_name" && (allChatsSortAsc ? "↑" : "↓")}
                       </th>
                       <th
                         onClick={() => handleAllChatsSort("created_at")}
                         style={{ cursor: "pointer" }}
                         title="Click to sort"
                       >
-                        Created At {allChatsSortKey === "created_at" && (allChatsSortAsc ? "↑" : "↓")}
+                        Start Date {allChatsSortKey === "created_at" && (allChatsSortAsc ? "↑" : "↓")}
                       </th>
                       <th
                         onClick={() => handleAllChatsSort("message_count")}
@@ -1217,37 +1285,43 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                         Messages {allChatsSortKey === "message_count" && (allChatsSortAsc ? "↑" : "↓")}
                       </th>
                       <th
-                        onClick={() => handleAllChatsSort("is_mission")}
+                        onClick={() => handleAllChatsSort("completed")}
                         style={{ cursor: "pointer" }}
                         title="Click to sort"
                       >
-                        Mission {allChatsSortKey === "is_mission" && (allChatsSortAsc ? "↑" : "↓")}
+                        Result {allChatsSortKey === "completed" && (allChatsSortAsc ? "↑" : "↓")}
                       </th>
-                      <th>Preview</th>
+                      <th>Chat</th>
                     </tr>
                   </thead>
                   <tbody>
                     {sortedAllChats().map((chat) => (
                       <tr key={chat.num}>
                         <td>{chat.num}</td>
-                        <td>{chat.title}</td>
+                        <td>{getWeekDisplay(chat.week)}</td>
                         <td>
                           <span className="badge badge-info">{chat.user_name}</span>
                         </td>
-                        <td>{chat.model}</td>
+                        <td>{chat.challenge_name || (chat.is_mission ? chat.model : "—")}</td>
                         <td>{formatChatTimestamp(chat.created_at)}</td>
                         <td>{formatNumber(chat.message_count)}</td>
                         <td>
-                          <span className={`badge ${chat.is_mission ? "badge-mission" : "badge-regular"}`}>
-                            {chat.is_mission
-                              ? chat.completed
-                                ? "Mission ✓"
-                                : "Mission"
-                              : "Regular"}
-                          </span>
+                          {chat.is_mission ? (
+                            <span title={chat.completed ? "Completed" : "Not completed"}>
+                              {chat.completed ? "✅" : "❌"}
+                            </span>
+                          ) : (
+                            "—"
+                          )}
                         </td>
-                        <td className="chat-preview">
-                          {chat.messages.length > 0 ? formatChatPreview(chat.messages) : "No preview"}
+                        <td>
+                          <button
+                            type="button"
+                            className="btn chat-open-btn"
+                            onClick={() => openChatModal(chat)}
+                          >
+                            View
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -1359,6 +1433,96 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
           </div>
         )}
       </section>
+      {selectedChat && (
+        <div
+          className="chat-modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Chat transcript"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeChatModal();
+            }
+          }}
+        >
+          <div className="chat-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="chat-modal-header">
+              <div className="chat-modal-title">
+                <h3>
+                  {selectedChat.challenge_name ||
+                    (selectedChat.is_mission ? selectedChat.model : selectedChat.title) ||
+                    `Chat #${selectedChat.num}`}
+                </h3>
+                <p>
+                  👤 {selectedChat.user_name} ·{" "}
+                  {selectedChat.is_mission ? `Week ${getWeekDisplay(selectedChat.week)}` : "Regular chat"}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="chat-modal-close"
+                onClick={closeChatModal}
+                aria-label="Close chat"
+              >
+                ×
+              </button>
+            </div>
+            <div className="chat-modal-meta">
+              <span>
+                <strong>Start:</strong> {formatChatTimestamp(selectedChat.created_at)}
+              </span>
+              <span>
+                <strong>Messages:</strong> {formatNumber(selectedChat.message_count)}
+              </span>
+              <span>
+                <strong>Result:</strong>{" "}
+                {selectedChat.is_mission
+                  ? selectedChat.completed
+                    ? "✅ Completed"
+                    : "❌ Not completed"
+                  : "—"}
+              </span>
+            </div>
+            <div className="chat-thread">
+              {selectedChat.messages.length === 0 ? (
+                <p className="chat-empty">No messages recorded for this chat.</p>
+              ) : (
+                selectedChat.messages.map((message, index) => {
+                  const role = (message.role ?? "system").toLowerCase();
+                  const isUser = role === "user";
+                  const isAssistant = role === "assistant";
+                  const timestampLabel = formatChatTimestamp(
+                    message.timestamp ?? selectedChat.created_at,
+                  );
+
+                  let rowClass = "chat-message-row system";
+                  let bubbleClass = "chat-bubble system";
+                  if (isUser) {
+                    rowClass = "chat-message-row user";
+                    bubbleClass = "chat-bubble user";
+                  } else if (isAssistant) {
+                    rowClass = "chat-message-row assistant";
+                    bubbleClass = "chat-bubble assistant";
+                  }
+
+                  return (
+                    <div className={rowClass} key={`${selectedChat.num}-${index}`}>
+                      <div className={bubbleClass}>
+                        <div className="chat-bubble-content">
+                          {message.content ? message.content : "(no content)"}
+                        </div>
+                        {timestampLabel !== "N/A" && (
+                          <span className="chat-bubble-timestamp">{timestampLabel}</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

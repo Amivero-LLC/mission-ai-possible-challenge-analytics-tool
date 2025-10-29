@@ -68,6 +68,7 @@ class MissionBreakdownEntry(BaseModel):
 class ChatMessage(BaseModel):
     role: Optional[str] = None
     content: Optional[str] = None
+    timestamp: Optional[Union[str, int, float]] = None
 
 
 class ChatPreview(BaseModel):
@@ -80,6 +81,8 @@ class ChatPreview(BaseModel):
     message_count: int = Field(..., ge=0)
     is_mission: bool
     completed: bool
+    week: Optional[Union[int, str]] = None
+    challenge_name: Optional[str] = None
     messages: List[ChatMessage] = Field(default_factory=list)
 
 

@@ -68,6 +68,7 @@ export interface MissionBreakdownEntry {
 export interface ChatMessage {
   role?: string | null;
   content?: string | null;
+  timestamp?: number | string | null;
 }
 
 export interface ChatPreview {
@@ -80,6 +81,8 @@ export interface ChatPreview {
   message_count: number;
   is_mission: boolean;
   completed: boolean;
+  week?: number | string | null;
+  challenge_name?: string | null;
   messages: ChatMessage[];
 }
 
