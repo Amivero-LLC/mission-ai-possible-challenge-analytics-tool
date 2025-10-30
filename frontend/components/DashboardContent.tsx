@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import * as XLSX from "xlsx";
 import { fetchDashboard, refreshData } from "../lib/api";
-import type { DashboardResponse, SortOption } from "../types/dashboard";
+import type { DashboardResponse, SortOption, MissionDetail } from "../types/dashboard";
 
 type TabKey = "overview" | "challengeresults" | "allchats" | "missions";
 
@@ -134,6 +134,91 @@ function formatChatTimestamp(value?: string | number | null) {
   const hourString = String(hours).padStart(2, "0");
 
   return `${month}/${day} ${hourString}:${minutes} ${amPm}`;
+}
+
+/**
+ * Format challenge timestamp for display in tables
+ */
+function formatChallengeTimestamp(value?: string | number | null) {
+  return formatChatTimestamp(value);
+}
+
+/**
+ * Render mission tooltip with incomplete and completed missions
+ */
+function renderMissionTooltip(
+  incompleteDetails: MissionDetail[],
+  completedDetails: MissionDetail[]
+) {
+  // Sort missions by week (nulls last) then by name
+  const sortMissions = (missions: MissionDetail[]) => {
+    return [...missions].sort((a, b) => {
+      // Sort by week first (nulls last)
+      if (a.week === null && b.week === null) {
+        return a.name.localeCompare(b.name);
+      }
+      if (a.week === null) return 1;
+      if (b.week === null) return -1;
+      if (a.week !== b.week) {
+        return a.week - b.week;
+      }
+      // Then by name
+      return a.name.localeCompare(b.name);
+    });
+  };
+
+  const sortedIncomplete = sortMissions(incompleteDetails);
+  const sortedCompleted = sortMissions(completedDetails);
+
+  return (
+    <div className="mission-tooltip">
+      <div className="mission-tooltip-header">Mission Details</div>
+
+      <div className="mission-tooltip-section">
+        <div className="mission-tooltip-section-title">
+          Completed ({completedDetails.length})
+        </div>
+        <div className="mission-tooltip-list">
+          {sortedCompleted.length > 0 ? (
+            sortedCompleted.map((mission, idx) => (
+              <div key={idx} className="mission-tooltip-item">
+                <span className="mission-tooltip-week">
+                  {mission.week !== null ? `Week ${mission.week}` : "N/A"}
+                </span>
+                <span className="mission-tooltip-name" title={mission.name}>
+                  {mission.name}
+                </span>
+              </div>
+            ))
+          ) : (
+            <div className="mission-tooltip-empty">No completed missions</div>
+          )}
+        </div>
+      </div>
+
+      <div className="mission-tooltip-section">
+        <div className="mission-tooltip-section-title">
+          Incomplete ({incompleteDetails.length})
+        </div>
+        <div className="mission-tooltip-list">
+          {sortedIncomplete.length > 0 ? (
+            sortedIncomplete.map((mission, idx) => (
+              <div key={idx} className="mission-tooltip-item">
+                <span className="mission-tooltip-week">
+                  {mission.week !== null ? `Week ${mission.week}` : "N/A"}
+                </span>
+                <span className="mission-tooltip-name" title={mission.name}>
+                  {mission.name}
+                </span>
+              </div>
+            ))
+          ) : (
+            <div className="mission-tooltip-empty">No incomplete missions</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -566,15 +651,15 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
           return direction * (aCompleted - bCompleted);
         }
         default: {
-          let aVal: unknown = (a as Record<string, unknown>)[allChatsSortKey];
-          let bVal: unknown = (b as Record<string, unknown>)[allChatsSortKey];
+          let aVal: unknown = (a as unknown as Record<string, unknown>)[allChatsSortKey];
+          let bVal: unknown = (b as unknown as Record<string, unknown>)[allChatsSortKey];
 
           if (aVal === null || aVal === undefined) aVal = "";
           if (bVal === null || bVal === undefined) bVal = "";
 
           if (typeof aVal === "string" || typeof bVal === "string") {
-            const aStr = aVal.toString().toLowerCase();
-            const bStr = bVal.toString().toLowerCase();
+            const aStr = String(aVal).toLowerCase();
+            const bStr = String(bVal).toLowerCase();
             if (!aStr && !bStr) return 0;
             if (!aStr) return 1;
             if (!bStr) return -1;
@@ -974,11 +1059,11 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                             Total Points {leaderboardSortKey === "total_points" && (leaderboardSortAsc ? "↑" : "↓")}
                           </th>
                           <th
-                            onClick={() => handleLeaderboardSort("completions")}
+                            onClick={() => handleLeaderboardSort("unique_missions_completed")}
                             style={{ cursor: "pointer" }}
-                            title="Click to sort"
+                            title="Click to sort - Hover over badges for details"
                           >
-                            Completions {leaderboardSortKey === "completions" && (leaderboardSortAsc ? "↑" : "↓")}
+                            Completed Missions {leaderboardSortKey === "unique_missions_completed" && (leaderboardSortAsc ? "↑" : "↓")} 👁️
                           </th>
                           <th
                             onClick={() => handleLeaderboardSort("attempts")}
@@ -1008,13 +1093,6 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                           >
                             Last Activity {leaderboardSortKey === "last_attempt" && (leaderboardSortAsc ? "↑" : "↓")}
                           </th>
-                          <th
-                            onClick={() => handleLeaderboardSort("unique_missions_completed")}
-                            style={{ cursor: "pointer" }}
-                            title="Click to sort"
-                          >
-                            Unique Missions {leaderboardSortKey === "unique_missions_completed" && (leaderboardSortAsc ? "↑" : "↓")}
-                          </th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1024,21 +1102,26 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                               <span className="badge badge-info">{entry.user_name}</span>
                             </td>
                             <td>{formatNumber(entry.total_points)}</td>
-                            <td>{formatNumber(entry.completions)}</td>
+                            <td>
+                              <div className="mission-tooltip-container">
+                                <div className="badge-group">
+                                  <span className="badge badge-success">
+                                    {entry.unique_missions_completed} completed
+                                  </span>
+                                  <span className="badge badge-warning">
+                                    {entry.unique_missions_attempted} incomplete
+                                  </span>
+                                </div>
+                                {renderMissionTooltip(
+                                  entry.missions_attempted_details || [],
+                                  entry.missions_completed_details || []
+                                )}
+                              </div>
+                            </td>
                             <td>{formatNumber(entry.attempts)}</td>
                             <td>{formatPercent(entry.efficiency)}</td>
                             <td>{formatNumber(entry.total_messages)}</td>
                             <td>{formatChallengeTimestamp(entry.last_attempt)}</td>
-                            <td>
-                              <div className="badge-group">
-                                <span className="badge badge-success">
-                                  {entry.unique_missions_completed} completed
-                                </span>
-                                <span className="badge badge-warning">
-                                  {entry.unique_missions_attempted} attempted
-                                </span>
-                              </div>
-                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -1340,8 +1423,8 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                 [...dashboard.mission_breakdown]
                   .sort((a, b) => {
                     // Sort by week first
-                    const weekA = a.week || 999;
-                    const weekB = b.week || 999;
+                    const weekA = Number(a.week) || 999;
+                    const weekB = Number(b.week) || 999;
                     if (weekA !== weekB) {
                       return weekA - weekB;
                     }

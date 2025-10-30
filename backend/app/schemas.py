@@ -35,6 +35,12 @@ class Summary(BaseModel):
     participation_rate: float = Field(..., ge=0)
 
 
+class MissionDetail(BaseModel):
+    name: str
+    week: Optional[int] = None
+    mission_id: str
+
+
 class LeaderboardEntry(BaseModel):
     user_id: str
     user_name: str
@@ -44,6 +50,8 @@ class LeaderboardEntry(BaseModel):
     total_messages: int = Field(..., ge=0)
     unique_missions_attempted: int = Field(..., ge=0)
     unique_missions_completed: int = Field(..., ge=0)
+    missions_attempted_details: List["MissionDetail"] = Field(default_factory=list)
+    missions_completed_details: List["MissionDetail"] = Field(default_factory=list)
     first_attempt: Optional[Union[str, int, float]] = None
     last_attempt: Optional[Union[str, int, float]] = None
     total_points: int = Field(default=0, ge=0)

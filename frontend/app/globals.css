@@ -485,6 +485,12 @@ body {
   border-radius: 18px;
   font-weight: 600;
   font-size: 0.8rem;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.mission-tooltip-container .badge:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .badge-info {
@@ -528,6 +534,127 @@ body {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.mission-tooltip-container {
+  position: static;
+  display: inline-block;
+  cursor: help;
+}
+
+.mission-tooltip-container .badge-group {
+  position: relative;
+}
+
+.mission-tooltip-container .badge-group::after {
+  content: '👁️';
+  font-size: 0.7rem;
+  margin-left: 4px;
+  opacity: 0.6;
+  transition: opacity 0.2s ease;
+}
+
+.mission-tooltip-container:hover .badge-group::after {
+  opacity: 1;
+}
+
+.mission-tooltip {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
+  padding: 16px;
+  z-index: 10000;
+  min-width: 320px;
+  max-width: 400px;
+  max-height: 80vh;
+  overflow-y: auto;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+  pointer-events: none;
+  white-space: normal;
+}
+
+.mission-tooltip-container:hover .mission-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.mission-tooltip-header {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--color-border);
+}
+
+.mission-tooltip-section {
+  margin-bottom: 12px;
+}
+
+.mission-tooltip-section:last-child {
+  margin-bottom: 0;
+}
+
+.mission-tooltip-section-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-secondary);
+  margin-bottom: 8px;
+}
+
+.mission-tooltip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mission-tooltip-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(102, 126, 234, 0.05);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.mission-tooltip-week {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  padding: 2px 8px;
+  background: var(--color-primary);
+  color: white;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.mission-tooltip-name {
+  flex: 1;
+  color: var(--color-text);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-tooltip-empty {
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+  font-style: italic;
+  padding: 6px 10px;
 }
 
 .progress-bar {

@@ -162,6 +162,8 @@ class MissionAnalyzer:
             "missions_attempted": [],
             "missions_completed": [],
             "completed_mission_models": [],  # Track models of completed missions for points
+            "missions_attempted_details": [],  # List of {name, week, mission_id} for attempted missions
+            "missions_completed_details": [],  # List of {name, week, mission_id} for completed missions
             "total_attempts": 0,
             "total_completions": 0,
             "total_messages": 0,
@@ -395,17 +397,43 @@ class MissionAnalyzer:
             values are represented as ``None``.
 
         Notes:
-            Regular expressions are intentionally tolerant to account for
-            hyphen/underscore variations (e.g., ``week-1`` or ``week_1``).
+            Week is determined from maip_week field in model metadata (via week_mapping).
+            Challenge number is extracted from model name as a fallback.
         """
+        # Get week from week_mapping (which comes from maip_week in model metadata)
+        week = None
+        week_str = self.week_mapping.get(model_name)
+
+        # Try the primary identifier
+        if not week_str:
+            primary = self._resolve_primary_identifier(model_name)
+            if primary:
+                week_str = self.week_mapping.get(primary)
+
+        # Try the resolved alias
+        if not week_str:
+            alias = self._resolve_alias(model_name)
+            if alias:
+                week_str = self.week_mapping.get(alias)
+
+        # Try lowercase variation
+        if not week_str:
+            model_lower = str(model_name).lower()
+            for key, val in self.week_mapping.items():
+                if key.lower() == model_lower:
+                    week_str = val
+                    break
+
+        # Convert week string to int
+        if week_str:
+            try:
+                week = int(week_str)
+            except (ValueError, TypeError):
+                week = None
+
+        # Extract challenge number from model name as fallback
         model_str = str(model_name).lower()
-
-        # Try to extract week number
-        week_match = re.search(r"week[-_]?(\d+)", model_str)
-        week = int(week_match.group(1)) if week_match else None
-
-        # Try to extract challenge number
-        challenge_match = re.search(r"challenge[-_]?(\d+)", model_str)
+        challenge_match = re.search(r"challenge[\s\-_]*(\d+)", model_str)
         challenge = int(challenge_match.group(1)) if challenge_match else None
 
         display_name = self._resolve_display_name(model_name) or model_name
@@ -782,6 +810,15 @@ class MissionAnalyzer:
                 stats = self.user_stats[user_id]
                 stats["user_id"] = user_id
                 stats["missions_attempted"].append(mission_info["mission_id"])
+
+                # Track detailed mission information for tooltip
+                mission_detail = {
+                    "name": mission_info["mission_id"],
+                    "week": mission_info["week"],
+                    "mission_id": mission_info["mission_id"]
+                }
+                stats["missions_attempted_details"].append(mission_detail)
+
                 stats["total_attempts"] += 1
                 stats["total_messages"] += mission_user_message_count
 
@@ -794,6 +831,7 @@ class MissionAnalyzer:
                     if completion_key not in stats["credited_completion_keys"]:
                         stats["missions_completed"].append(mission_info["mission_id"])
                         stats["completed_mission_models"].append(mission_model)
+                        stats["missions_completed_details"].append(mission_detail)
                         stats["total_completions"] += 1
                         stats["credited_completion_keys"].add(completion_key)
 
@@ -875,6 +913,33 @@ class MissionAnalyzer:
                 if points is not None:
                     total_points += points
 
+            # Calculate attempted missions (only those NOT completed)
+            attempted_set = set(stats["missions_attempted"])
+            completed_set = set(stats["missions_completed"])
+            attempted_only_set = attempted_set - completed_set
+
+            # Get detailed lists, removing duplicates by mission_id
+            attempted_details_map = {}
+            completed_details_map = {}
+
+            for detail in stats["missions_attempted_details"]:
+                mid = detail["mission_id"]
+                if mid not in attempted_details_map:
+                    attempted_details_map[mid] = detail
+
+            for detail in stats["missions_completed_details"]:
+                mid = detail["mission_id"]
+                if mid not in completed_details_map:
+                    completed_details_map[mid] = detail
+
+            # Filter attempted details to only include those not completed
+            attempted_only_details = [
+                detail for mid, detail in attempted_details_map.items()
+                if mid in attempted_only_set
+            ]
+
+            completed_details = list(completed_details_map.values())
+
             leaderboard.append(
                 {
                     "user_id": user_id,
@@ -882,8 +947,10 @@ class MissionAnalyzer:
                     "completions": stats["total_completions"],
                     "efficiency": efficiency,
                     "total_messages": stats["total_messages"],
-                    "unique_missions_attempted": len(set(stats["missions_attempted"])),
-                    "unique_missions_completed": len(set(stats["missions_completed"])),
+                    "unique_missions_attempted": len(attempted_only_set),
+                    "unique_missions_completed": len(completed_set),
+                    "missions_attempted_details": attempted_only_details,
+                    "missions_completed_details": completed_details,
                     "first_attempt": stats["first_attempt"],
                     "last_attempt": stats["last_attempt"],
                     "total_points": total_points,

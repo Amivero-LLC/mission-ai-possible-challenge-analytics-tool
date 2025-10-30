@@ -35,6 +35,12 @@ export interface Summary {
   participation_rate: number;
 }
 
+export interface MissionDetail {
+  name: string;
+  week: number | null;
+  mission_id: string;
+}
+
 export interface LeaderboardEntry {
   user_id: string;
   user_name: string;
@@ -44,6 +50,8 @@ export interface LeaderboardEntry {
   total_messages: number;
   unique_missions_attempted: number;
   unique_missions_completed: number;
+  missions_attempted_details: MissionDetail[];
+  missions_completed_details: MissionDetail[];
   first_attempt?: string | number | null;
   last_attempt?: string | number | null;
   total_points: number;
