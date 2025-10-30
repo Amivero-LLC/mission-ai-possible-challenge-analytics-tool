@@ -148,7 +148,6 @@ export default function Header({ onExportCSV, onExportExcel, isLoading = false }
 
           <div className="header-actions">
             <button className="btn btn-outline">Login</button>
-            <button className="btn btn-primary">Sign Up</button>
           </div>
         </nav>
 
