@@ -67,8 +67,8 @@ function formatPercent(value: number, fractionDigits = 1) {
   return `${value.toFixed(fractionDigits)}%`;
 }
 
-// Use a shared formatter so server/client renders stay in sync and avoid hydration mismatches.
-const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+// Fallback UTC formatters keep the initial SSR markup stable; client replaces them with locale-aware versions.
+const defaultHeaderFormatter = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   month: "2-digit",
   day: "2-digit",
@@ -76,38 +76,36 @@ const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   minute: "2-digit",
   second: "2-digit",
   hour12: true,
+  timeZone: "UTC",
+  timeZoneName: "short",
 });
 
-/**
- * Format ISO timestamps for display in the dashboard header.
- *
- * Args:
- *   value (string): ISO-8601 timestamp returned by the API.
- *
- * Returns:
- *   string – Locale-aware date/time. Invalid inputs fall back to the raw value so
- *   developers can spot malformed data.
- */
-function formatDateTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) {
-    return value;
-  }
-  return dateTimeFormatter.format(date);
-}
+const defaultChatFormatter = new Intl.DateTimeFormat("en-US", {
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: true,
+  timeZone: "UTC",
+  timeZoneName: "short",
+});
 
-/**
- * Format chat timestamps that may be Unix timestamps (numbers) or ISO strings.
- *
- * Args:
- *   value (string | number | null | undefined): Timestamp from chat data.
- *
- * Returns:
- *   string – Formatted date/time or "N/A" if unavailable.
- */
-function formatChatTimestamp(value?: string | number | null) {
+const defaultChallengeFormatter = new Intl.DateTimeFormat("en-US", {
+  month: "2-digit",
+  day: "2-digit",
+  year: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: true,
+  timeZone: "UTC",
+  timeZoneName: "short",
+});
+
+type DateVariant = "header" | "chat" | "challenge";
+
+function parseTimestamp(value?: string | number | null) {
   if (value === null || value === undefined || value === "") {
-    return "N/A";
+    return null;
   }
 
   let timestamp: string | number = value;
@@ -122,25 +120,65 @@ function formatChatTimestamp(value?: string | number | null) {
 
   const date = new Date(timestamp);
   if (Number.isNaN(date.valueOf())) {
+    return null;
+  }
+
+  return date;
+}
+
+const variantDefaultFormatterMap: Record<DateVariant, Intl.DateTimeFormat> = {
+  header: defaultHeaderFormatter,
+  chat: defaultChatFormatter,
+  challenge: defaultChallengeFormatter,
+};
+
+function formatTimestamp(
+  value: string | number | null | undefined,
+  variant: DateVariant,
+  formatter?: Intl.DateTimeFormat
+) {
+  const parsedDate = parseTimestamp(value);
+  if (!parsedDate) {
     return "N/A";
   }
 
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  let hours = date.getHours();
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  const amPm = hours >= 12 ? "PM" : "AM";
-  hours = hours % 12 || 12;
-  const hourString = String(hours).padStart(2, "0");
+  const activeFormatter = formatter ?? variantDefaultFormatterMap[variant];
+  return activeFormatter.format(parsedDate);
+}
 
-  return `${month}/${day} ${hourString}:${minutes} ${amPm}`;
+/**
+ * Format ISO timestamps for display in the dashboard header.
+ *
+ * Args:
+ *   value (string): ISO-8601 timestamp returned by the API.
+ *
+ * Returns:
+ *   string – Locale-aware date/time. Invalid inputs fall back to the raw value so
+ *   developers can spot malformed data.
+ */
+function formatDateTime(value: string, formatter?: Intl.DateTimeFormat) {
+  const formatted = formatTimestamp(value, "header", formatter);
+  return formatted === "N/A" ? value : formatted;
+}
+
+/**
+ * Format chat timestamps that may be Unix timestamps (numbers) or ISO strings.
+ *
+ * Args:
+ *   value (string | number | null | undefined): Timestamp from chat data.
+ *
+ * Returns:
+ *   string – Formatted date/time or "N/A" if unavailable.
+ */
+function formatChatTimestamp(value?: string | number | null, formatter?: Intl.DateTimeFormat) {
+  return formatTimestamp(value, "chat", formatter);
 }
 
 /**
  * Format challenge timestamp for display in tables
  */
-function formatChallengeTimestamp(value?: string | number | null) {
-  return formatChatTimestamp(value);
+function formatChallengeTimestamp(value?: string | number | null, formatter?: Intl.DateTimeFormat) {
+  return formatTimestamp(value, "challenge", formatter);
 }
 
 /**
@@ -253,6 +291,9 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [selectedChat, setSelectedChat] = useState<ChatEntry | null>(null);
+  const [headerFormatter, setHeaderFormatter] = useState<Intl.DateTimeFormat | null>(null);
+  const [chatFormatter, setChatFormatter] = useState<Intl.DateTimeFormat | null>(null);
+  const [challengeFormatter, setChallengeFormatter] = useState<Intl.DateTimeFormat | null>(null);
 
   // Challenge Results sorting state
   type ChallengeResultSortKey = "user_name" | "status" | "num_attempts" | "first_attempt_time" | "completed_time" | "num_messages";
@@ -372,6 +413,51 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
   useEffect(() => {
     applyFilters();
   }, [applyFilters]);
+
+  /**
+   * Build locale-aware formatters once the component mounts on the client.
+   */
+  useEffect(() => {
+    // Only run in browsers where Intl has full support
+    try {
+      setHeaderFormatter(
+        new Intl.DateTimeFormat(undefined, {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: true,
+          timeZoneName: "short",
+        })
+      );
+      setChatFormatter(
+        new Intl.DateTimeFormat(undefined, {
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: true,
+          timeZoneName: "short",
+        })
+      );
+      setChallengeFormatter(
+        new Intl.DateTimeFormat(undefined, {
+          month: "2-digit",
+          day: "2-digit",
+          year: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: true,
+          timeZoneName: "short",
+        })
+      );
+    } catch (err) {
+      // Swallow errors from Intl constructor (very rare) and stick with UTC fallback.
+      console.warn("Unable to build locale formatter", err);
+    }
+  }, []);
 
   /**
    * Export current tab data to CSV format
@@ -706,33 +792,6 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
   };
 
   /**
-   * Format timestamp for Challenge Results (local timezone)
-   */
-  const formatChallengeTimestamp = (value?: string | number | null) => {
-    if (!value) return "N/A";
-
-    // If it's a Unix timestamp (number), convert to milliseconds
-    const timestamp = typeof value === "number" ? value * 1000 : value;
-    const date = new Date(timestamp);
-
-    if (Number.isNaN(date.valueOf())) {
-      return "N/A";
-    }
-
-    // Format as MM/DD/YY HH:MM in user's local timezone
-    const formatter = new Intl.DateTimeFormat("en-US", {
-      month: "2-digit",
-      day: "2-digit",
-      year: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: true,
-    });
-
-    return formatter.format(date);
-  };
-
-  /**
    * Get status badge class name
    */
   const getStatusBadgeClass = (status: string) => {
@@ -839,7 +898,7 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
               Last Updated
             </p>
             <p style={{ fontSize: "0.85rem", color: "#1f2937" }}>
-              {formatDateTime(dashboard.generated_at)}
+              {formatDateTime(dashboard.generated_at, headerFormatter ?? undefined)}
             </p>
           </div>
 
@@ -850,7 +909,7 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
               </p>
               <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                 <p style={{ fontSize: "0.85rem", color: "#1f2937", margin: 0 }}>
-                  {formatDateTime(dashboard.last_fetched)}
+                  {formatDateTime(dashboard.last_fetched, headerFormatter ?? undefined)}
                 </p>
                 <span style={{ padding: "2px 8px", background: "rgba(102, 126, 234, 0.1)", borderRadius: "4px", fontSize: "0.7rem", fontWeight: "500" }}>
                   {dashboard.data_source === "api" ? "API" : "File"}
@@ -1121,7 +1180,7 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                             <td>{formatNumber(entry.attempts)}</td>
                             <td>{formatPercent(entry.efficiency)}</td>
                             <td>{formatNumber(entry.total_messages)}</td>
-                            <td>{formatChallengeTimestamp(entry.last_attempt)}</td>
+                            <td>{formatChallengeTimestamp(entry.last_attempt, challengeFormatter ?? undefined)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1300,8 +1359,8 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                                 )}
                               </td>
                               <td>{formatNumber(result.num_attempts)}</td>
-                              <td>{formatChallengeTimestamp(result.first_attempt_time)}</td>
-                              <td>{formatChallengeTimestamp(result.completed_time)}</td>
+                              <td>{formatChallengeTimestamp(result.first_attempt_time, challengeFormatter ?? undefined)}</td>
+                              <td>{formatChallengeTimestamp(result.completed_time, challengeFormatter ?? undefined)}</td>
                               <td>{formatNumber(result.num_messages)}</td>
                             </tr>
                           ))}
@@ -1384,7 +1443,7 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                           <span className="badge badge-info">{chat.user_name}</span>
                         </td>
                         <td>{chat.challenge_name || (chat.is_mission ? chat.model : "—")}</td>
-                        <td>{formatChatTimestamp(chat.created_at)}</td>
+                        <td>{formatChatTimestamp(chat.created_at, chatFormatter ?? undefined)}</td>
                         <td>{formatNumber(chat.message_count)}</td>
                         <td>
                           {chat.is_mission ? (
@@ -1550,7 +1609,7 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
             </div>
             <div className="chat-modal-meta">
               <span>
-                <strong>Start:</strong> {formatChatTimestamp(selectedChat.created_at)}
+                <strong>Start:</strong> {formatChatTimestamp(selectedChat.created_at, chatFormatter ?? undefined)}
               </span>
               <span>
                 <strong>Messages:</strong> {formatNumber(selectedChat.message_count)}
@@ -1574,6 +1633,7 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                   const isAssistant = role === "assistant";
                   const timestampLabel = formatChatTimestamp(
                     message.timestamp ?? selectedChat.created_at,
+                    chatFormatter ?? undefined,
                   );
 
                   let rowClass = "chat-message-row system";
