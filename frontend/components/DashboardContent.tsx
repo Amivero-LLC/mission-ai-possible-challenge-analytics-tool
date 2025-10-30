@@ -76,7 +76,6 @@ const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   minute: "2-digit",
   second: "2-digit",
   hour12: true,
-  timeZone: "UTC",
 });
 
 /**
@@ -622,7 +621,7 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
   };
 
   /**
-   * Format timestamp for Challenge Results (EST timezone)
+   * Format timestamp for Challenge Results (local timezone)
    */
   const formatChallengeTimestamp = (value?: string | number | null) => {
     if (!value) return "N/A";
@@ -635,18 +634,17 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
       return "N/A";
     }
 
-    // Format as MM/DD/YY HH:MM EST
-    const estFormatter = new Intl.DateTimeFormat("en-US", {
+    // Format as MM/DD/YY HH:MM in user's local timezone
+    const formatter = new Intl.DateTimeFormat("en-US", {
       month: "2-digit",
       day: "2-digit",
       year: "2-digit",
       hour: "2-digit",
       minute: "2-digit",
-      timeZone: "America/New_York",
       hour12: true,
     });
 
-    return estFormatter.format(date) + " EST";
+    return formatter.format(date);
   };
 
   /**
