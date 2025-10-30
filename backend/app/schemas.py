@@ -50,8 +50,10 @@ class LeaderboardEntry(BaseModel):
     total_messages: int = Field(..., ge=0)
     unique_missions_attempted: int = Field(..., ge=0)
     unique_missions_completed: int = Field(..., ge=0)
+    unique_missions_not_started: int = Field(default=0, ge=0)
     missions_attempted_details: List["MissionDetail"] = Field(default_factory=list)
     missions_completed_details: List["MissionDetail"] = Field(default_factory=list)
+    missions_not_started_details: List["MissionDetail"] = Field(default_factory=list)
     first_attempt: Optional[Union[str, int, float]] = None
     last_attempt: Optional[Union[str, int, float]] = None
     total_points: int = Field(default=0, ge=0)

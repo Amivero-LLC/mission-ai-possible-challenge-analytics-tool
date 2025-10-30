@@ -182,11 +182,12 @@ function formatChallengeTimestamp(value?: string | number | null, formatter?: In
 }
 
 /**
- * Render mission tooltip with incomplete and completed missions
+ * Render mission tooltip with incomplete, completed, and not started missions
  */
 function renderMissionTooltip(
   incompleteDetails: MissionDetail[],
-  completedDetails: MissionDetail[]
+  completedDetails: MissionDetail[],
+  notStartedDetails: MissionDetail[]
 ) {
   // Sort missions by week (nulls last) then by name
   const sortMissions = (missions: MissionDetail[]) => {
@@ -207,6 +208,7 @@ function renderMissionTooltip(
 
   const sortedIncomplete = sortMissions(incompleteDetails);
   const sortedCompleted = sortMissions(completedDetails);
+  const sortedNotStarted = sortMissions(notStartedDetails);
 
   return (
     <div className="mission-tooltip">
@@ -252,6 +254,28 @@ function renderMissionTooltip(
             ))
           ) : (
             <div className="mission-tooltip-empty">No incomplete missions</div>
+          )}
+        </div>
+      </div>
+
+      <div className="mission-tooltip-section">
+        <div className="mission-tooltip-section-title">
+          Not Started ({notStartedDetails.length})
+        </div>
+        <div className="mission-tooltip-list">
+          {sortedNotStarted.length > 0 ? (
+            sortedNotStarted.map((mission, idx) => (
+              <div key={idx} className="mission-tooltip-item">
+                <span className="mission-tooltip-week">
+                  {mission.week !== null ? `Week ${mission.week}` : "N/A"}
+                </span>
+                <span className="mission-tooltip-name" title={mission.name}>
+                  {mission.name}
+                </span>
+              </div>
+            ))
+          ) : (
+            <div className="mission-tooltip-empty">All missions started!</div>
           )}
         </div>
       </div>
@@ -1170,10 +1194,14 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                                   <span className="badge badge-warning">
                                     {entry.unique_missions_attempted} incomplete
                                   </span>
+                                  <span className="badge badge-secondary">
+                                    {entry.unique_missions_not_started} not started
+                                  </span>
                                 </div>
                                 {renderMissionTooltip(
                                   entry.missions_attempted_details || [],
-                                  entry.missions_completed_details || []
+                                  entry.missions_completed_details || [],
+                                  entry.missions_not_started_details || []
                                 )}
                               </div>
                             </td>

@@ -940,6 +940,34 @@ class MissionAnalyzer:
 
             completed_details = list(completed_details_map.values())
 
+            # Calculate not started missions (missions in mission_model_aliases but not attempted or completed)
+            # Get all missions that were started (attempted or completed)
+            all_started_mission_ids = set(attempted_details_map.keys()) | set(completed_details_map.keys())
+
+            # Build not started details, avoiding duplicates
+            not_started_details = []
+            seen_not_started = set()
+
+            for mission_alias in self.mission_model_aliases:
+                # Extract mission info using the same logic as when missions are attempted
+                mission_info = self.extract_mission_info(mission_alias)
+                mission_id = mission_info["mission_id"]
+
+                # Skip if this mission was already attempted or completed
+                if mission_id in all_started_mission_ids:
+                    continue
+
+                # Skip if we've already added this mission (avoid duplicates from multiple aliases)
+                if mission_id in seen_not_started:
+                    continue
+
+                seen_not_started.add(mission_id)
+                not_started_details.append({
+                    "name": mission_id,
+                    "week": mission_info.get("week"),
+                    "mission_id": mission_id
+                })
+
             leaderboard.append(
                 {
                     "user_id": user_id,
@@ -949,8 +977,10 @@ class MissionAnalyzer:
                     "total_messages": stats["total_messages"],
                     "unique_missions_attempted": len(attempted_only_set),
                     "unique_missions_completed": len(completed_set),
+                    "unique_missions_not_started": len(not_started_details),
                     "missions_attempted_details": attempted_only_details,
                     "missions_completed_details": completed_details,
+                    "missions_not_started_details": not_started_details,
                     "first_attempt": stats["first_attempt"],
                     "last_attempt": stats["last_attempt"],
                     "total_points": total_points,

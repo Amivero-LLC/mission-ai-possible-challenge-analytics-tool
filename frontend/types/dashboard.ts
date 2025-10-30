@@ -50,8 +50,10 @@ export interface LeaderboardEntry {
   total_messages: number;
   unique_missions_attempted: number;
   unique_missions_completed: number;
+  unique_missions_not_started: number;
   missions_attempted_details: MissionDetail[];
   missions_completed_details: MissionDetail[];
+  missions_not_started_details: MissionDetail[];
   first_attempt?: string | number | null;
   last_attempt?: string | number | null;
   total_points: number;

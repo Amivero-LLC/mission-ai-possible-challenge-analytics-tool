@@ -508,6 +508,11 @@ body {
   color: #92400e;
 }
 
+.badge-secondary {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
 .badge-mission {
   background: #e0e7ff;
   color: #4338ca;
