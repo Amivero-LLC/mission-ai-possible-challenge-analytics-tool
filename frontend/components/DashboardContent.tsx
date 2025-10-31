@@ -1,11 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
-import { fetchDashboard, refreshData } from "../lib/api";
+import { fetchDashboard, fetchDatabaseStatus, reloadDatabase } from "../lib/api";
+import type { DatabaseStatus, ReloadMode, ReloadRun, ReloadResource } from "../types/admin";
 import type { DashboardResponse, SortOption, MissionDetail } from "../types/dashboard";
 
-type TabKey = "overview" | "challengeresults" | "allchats" | "missions";
+type TabKey = "overview" | "challengeresults" | "allchats" | "missions" | "admin";
 
 type FilterState = {
   week: string;
@@ -24,6 +25,7 @@ const tabs: Array<{ id: TabKey; label: string }> = [
   { id: "challengeresults", label: "🏅 Challenge Results" },
   { id: "allchats", label: "💬 All Chats" },
   { id: "missions", label: "🎯 Missions" },
+  { id: "admin", label: "🛠 Admin" },
 ];
 
 const defaultFilters: FilterState = {
@@ -312,12 +314,14 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [selectedChat, setSelectedChat] = useState<ChatEntry | null>(null);
   const [headerFormatter, setHeaderFormatter] = useState<Intl.DateTimeFormat | null>(null);
   const [chatFormatter, setChatFormatter] = useState<Intl.DateTimeFormat | null>(null);
   const [challengeFormatter, setChallengeFormatter] = useState<Intl.DateTimeFormat | null>(null);
+  const [toast, setToast] = useState<{ message: string; variant: "success" | "neutral" | "error" } | null>(null);
+  const toastTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastReloadTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Challenge Results sorting state
   type ChallengeResultSortKey = "user_name" | "status" | "num_attempts" | "first_attempt_time" | "completed_time" | "num_messages";
@@ -333,6 +337,18 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
   type AllChatsSortKey = "num" | "week" | "user_name" | "challenge_name" | "created_at" | "message_count" | "completed";
   const [allChatsSortKey, setAllChatsSortKey] = useState<AllChatsSortKey>("created_at");
   const [allChatsSortAsc, setAllChatsSortAsc] = useState(false);
+
+  // Admin panel state
+  const [adminStatus, setAdminStatus] = useState<DatabaseStatus | null>(null);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminError, setAdminError] = useState<string | null>(null);
+  const [reloadMode, setReloadMode] = useState<ReloadMode>("upsert");
+  const [lastReloadRuns, setLastReloadRuns] = useState<ReloadRun[]>([]);
+  const toastAppearance: Record<"success" | "neutral" | "error", { background: string; border: string; color: string; icon: string }> = {
+    success: { background: "#ecfdf5", border: "#34d399", color: "#065f46", icon: "✓" },
+    neutral: { background: "#f3f4f6", border: "#d1d5db", color: "#374151", icon: "ℹ️" },
+    error: { background: "#fee2e2", border: "#f87171", color: "#b91c1c", icon: "⚠️" },
+  };
 
   const handleFiltersChange = (key: keyof FilterState, value: string) => {
     setFilters((prev) => {
@@ -354,6 +370,160 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
         return missionWeek === filters.week;
       })
     : dashboard.summary.missions_list || [];
+
+const dataSourceLabel = useMemo(() => {
+  if (!dashboard.data_source) {
+    return "Unknown";
+  }
+  if (dashboard.data_source === "api") {
+    return "API";
+  }
+  if (dashboard.data_source === "database") {
+    return "Database";
+  }
+  if (dashboard.data_source === "file") {
+    return "File";
+  }
+  return dashboard.data_source;
+}, [dashboard.data_source]);
+
+  const showToast = useCallback((message: string, variant: "success" | "neutral" | "error" = "neutral") => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    setToast({ message, variant });
+    toastTimerRef.current = setTimeout(() => setToast(null), 4000);
+  }, []);
+
+  const summarizeRuns = useCallback(
+    (runs: ReloadRun[], scope: ReloadResource | "all" | null = null): { message: string; variant: "success" | "neutral" } => {
+      if (!runs || runs.length === 0) {
+        return { message: "Data synchronized.", variant: "neutral" };
+      }
+
+      const trackedResources: ReloadResource[] = ["users", "models", "chats"];
+      const newCounts: Record<string, number> = { users: 0, models: 0, chats: 0 };
+      const totalCounts: Record<string, number | null> = { users: null, models: null, chats: null };
+
+      runs.forEach((run) => {
+        const resource = run.resource as ReloadResource;
+        const newCount = run.new_records ?? (run.total_records != null && run.previous_count != null ? Math.max(run.total_records - run.previous_count, 0) : run.rows ?? 0);
+        const totalCount = run.total_records ?? null;
+
+        if (trackedResources.includes(resource)) {
+          newCounts[resource] = newCount;
+          if (totalCount !== null) {
+            totalCounts[resource] = totalCount;
+          }
+        }
+      });
+
+      const aggregateNew = newCounts.users + newCounts.models + newCounts.chats;
+      const isFullReload = scope === "all";
+      const resourceSet = new Set(runs.map((run) => run.resource));
+      const includesMultipleTrackedResources = trackedResources.filter((resource) => resourceSet.has(resource)).length > 1;
+
+      if (isFullReload || includesMultipleTrackedResources) {
+        if (aggregateNew > 0) {
+          return {
+            message: `Loaded users: ${formatNumber(newCounts.users)}, models: ${formatNumber(newCounts.models)}, chats: ${formatNumber(newCounts.chats)}`,
+            variant: "success",
+          };
+        }
+        return { message: "Data synchronized. No new records found.", variant: "neutral" };
+      }
+
+      const targetResource = scope && scope !== "all" ? scope : (runs[0]?.resource as ReloadResource | undefined);
+      if (targetResource) {
+        const label = `${targetResource.charAt(0).toUpperCase()}${targetResource.slice(1)}`;
+        const newCount = targetResource in newCounts ? newCounts[targetResource] : runs[0]?.new_records ?? runs[0]?.rows ?? 0;
+        const totalCount = targetResource in totalCounts ? totalCounts[targetResource] : runs[0]?.total_records ?? null;
+
+        if ((newCount ?? 0) > 0) {
+          const totalText = totalCount != null ? ` (total ${formatNumber(totalCount)})` : "";
+          return { message: `${label} loaded ${formatNumber(newCount)} new${totalText}`, variant: "success" };
+        }
+        return {
+          message: `${label} synchronized. No new records found.`,
+          variant: "neutral",
+        };
+      }
+
+      return { message: "Data synchronized.", variant: "neutral" };
+    },
+    [],
+  );
+
+  const loadAdminStatus = useCallback(async () => {
+    try {
+      setAdminLoading(true);
+      setAdminError(null);
+      const status = await fetchDatabaseStatus();
+      setAdminStatus(status);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load admin status";
+      setAdminError(message);
+    } finally {
+      setAdminLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAdminStatus();
+  }, [loadAdminStatus]);
+
+  const handleReload = useCallback(
+    async (resource: ReloadResource) => {
+      setAdminError(null);
+      setLastReloadRuns([]);
+      setAdminLoading(true);
+      setHeaderLoading?.(true);
+
+      try {
+        const runs = await reloadDatabase(resource, reloadMode);
+        setLastReloadRuns(runs);
+        if (lastReloadTimerRef.current) {
+          clearTimeout(lastReloadTimerRef.current);
+        }
+        lastReloadTimerRef.current = setTimeout(() => setLastReloadRuns([]), 4000);
+
+        const status = await fetchDatabaseStatus();
+        setAdminStatus(status);
+
+        const { message, variant } = summarizeRuns(runs, resource);
+        showToast(message, variant);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Reload failed";
+        setAdminError(message);
+        showToast(message, "error");
+      } finally {
+        setAdminLoading(false);
+        setHeaderLoading?.(false);
+      }
+    },
+    [reloadMode, setHeaderLoading, showToast, summarizeRuns],
+  );
+
+  const truncateDisabledForUsers = reloadMode === "truncate";
+  const lastRunSummary = lastReloadRuns
+    .map((run) => {
+      const newCount = run.new_records ?? run.rows ?? null;
+      const totalCount = run.total_records ?? null;
+      const details: string[] = [];
+      if (newCount !== null) {
+        details.push(`+${formatNumber(newCount)}`);
+      }
+      if (totalCount !== null) {
+        details.push(`total ${formatNumber(totalCount)}`);
+      }
+      const detailText = details.length > 0 ? ` – ${details.join(", ")}` : "";
+      return `${run.resource} (${run.status}${detailText})`;
+    })
+    .join(" • ");
+
+  useEffect(() => {
+    loadAdminStatus();
+  }, [loadAdminStatus]);
 
   /**
    * Restore default filters and reload the dashboard.
@@ -408,28 +578,39 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
    */
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    setRefreshMessage(null);
     setError(null);
+    setAdminError(null);
+    setLastReloadRuns([]);
+
     try {
-      const result = await refreshData();
-      setRefreshMessage("Data refreshed successfully!");
-      // After refresh, reload the dashboard with current filters
-      const data = await fetchDashboard({
-        sort_by: "completions",
-        week: filters.week || undefined,
-        challenge: filters.challenge || undefined,
-        user_id: filters.user || undefined,
-        status: filters.status || undefined,
-      });
-      setDashboard(data);
-      // Clear success message after 3 seconds
-      setTimeout(() => setRefreshMessage(null), 3000);
+      setAdminLoading(true);
+      setHeaderLoading?.(true);
+
+      const runs = await reloadDatabase("all", "upsert");
+      setLastReloadRuns(runs);
+      if (lastReloadTimerRef.current) {
+        clearTimeout(lastReloadTimerRef.current);
+      }
+      lastReloadTimerRef.current = setTimeout(() => setLastReloadRuns([]), 4000);
+
+      const status = await fetchDatabaseStatus();
+      setAdminStatus(status);
+
+      await applyFilters();
+
+      const { message, variant } = summarizeRuns(runs, "all");
+      showToast(message, variant);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to refresh data from Open WebUI.");
+      const message = err instanceof Error ? err.message : "Unable to load data into the database.";
+      setError(message);
+      setAdminError(message);
+      showToast(message, "error");
     } finally {
       setRefreshing(false);
+      setAdminLoading(false);
+      setHeaderLoading?.(false);
     }
-  }, [filters]);
+  }, [applyFilters, setHeaderLoading, showToast, summarizeRuns]);
 
   /**
    * Automatically apply filters when filter state changes.
@@ -581,6 +762,17 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
       setHeaderLoading(loading);
     }
   }, [loading, setHeaderLoading]);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
+      if (lastReloadTimerRef.current) {
+        clearTimeout(lastReloadTimerRef.current);
+      }
+    };
+  }, []);
 
   /**
    * Sort challenge results based on the current sort key and direction
@@ -831,6 +1023,34 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
 
   return (
     <div className="dashboard-container" style={{ position: "relative" }}>
+      {toast && (
+        <div
+          role="status"
+          aria-live="assertive"
+          style={{
+            position: "fixed",
+            top: "1rem",
+            right: "1rem",
+            minWidth: "260px",
+            maxWidth: "360px",
+            padding: "0.75rem 1rem",
+            borderRadius: "0.75rem",
+            border: `1px solid ${toastAppearance[toast.variant].border}`,
+            backgroundColor: toastAppearance[toast.variant].background,
+            color: toastAppearance[toast.variant].color,
+            boxShadow: "0 10px 25px rgba(0, 0, 0, 0.12)",
+            display: "flex",
+            alignItems: "center",
+            gap: "0.5rem",
+            zIndex: 1200,
+            pointerEvents: "none",
+            fontWeight: 500,
+          }}
+        >
+          <span style={{ fontSize: "1.1rem" }}>{toastAppearance[toast.variant].icon}</span>
+          <span style={{ flex: 1 }}>{toast.message}</span>
+        </div>
+      )}
       {/* Loading Overlay */}
       {loading && (
         <>
@@ -922,7 +1142,9 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
               Last Updated
             </p>
             <p style={{ fontSize: "0.85rem", color: "#1f2937" }}>
-              {formatDateTime(dashboard.generated_at, headerFormatter ?? undefined)}
+              <span suppressHydrationWarning>
+                {formatDateTime(dashboard.generated_at, headerFormatter ?? undefined)}
+              </span>
             </p>
           </div>
 
@@ -933,10 +1155,12 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
               </p>
               <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                 <p style={{ fontSize: "0.85rem", color: "#1f2937", margin: 0 }}>
-                  {formatDateTime(dashboard.last_fetched, headerFormatter ?? undefined)}
+                  <span suppressHydrationWarning>
+                    {formatDateTime(dashboard.last_fetched, headerFormatter ?? undefined)}
+                  </span>
                 </p>
                 <span style={{ padding: "2px 8px", background: "rgba(102, 126, 234, 0.1)", borderRadius: "4px", fontSize: "0.7rem", fontWeight: "500" }}>
-                  {dashboard.data_source === "api" ? "API" : "File"}
+                  {dataSourceLabel}
                 </span>
               </div>
             </div>
@@ -953,22 +1177,9 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
               fontSize: "0.9rem",
             }}
           >
-            {refreshing ? "⏳ Refreshing..." : "🔄 Refresh Data"}
+            {refreshing ? "⏳ Loading…" : "💾 Load Data (Upsert)"}
           </button>
 
-          {refreshMessage && (
-            <p style={{
-              color: "#10b981",
-              fontSize: "0.8rem",
-              marginTop: "0.75rem",
-              padding: "8px 12px",
-              background: "#d1fae5",
-              borderRadius: "6px",
-              margin: "0.75rem 0 0 0",
-            }}>
-              ✓ {refreshMessage}
-            </p>
-          )}
         </div>
       </div>
 
@@ -1208,7 +1419,7 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                             <td>{formatNumber(entry.attempts)}</td>
                             <td>{formatPercent(entry.efficiency)}</td>
                             <td>{formatNumber(entry.total_messages)}</td>
-                            <td>{formatChallengeTimestamp(entry.last_attempt, challengeFormatter ?? undefined)}</td>
+                            <td suppressHydrationWarning>{formatChallengeTimestamp(entry.last_attempt, challengeFormatter ?? undefined)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1387,8 +1598,8 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                                 )}
                               </td>
                               <td>{formatNumber(result.num_attempts)}</td>
-                              <td>{formatChallengeTimestamp(result.first_attempt_time, challengeFormatter ?? undefined)}</td>
-                              <td>{formatChallengeTimestamp(result.completed_time, challengeFormatter ?? undefined)}</td>
+                              <td suppressHydrationWarning>{formatChallengeTimestamp(result.first_attempt_time, challengeFormatter ?? undefined)}</td>
+                              <td suppressHydrationWarning>{formatChallengeTimestamp(result.completed_time, challengeFormatter ?? undefined)}</td>
                               <td>{formatNumber(result.num_messages)}</td>
                             </tr>
                           ))}
@@ -1471,7 +1682,7 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                           <span className="badge badge-info">{chat.user_name}</span>
                         </td>
                         <td>{chat.challenge_name || (chat.is_mission ? chat.model : "—")}</td>
-                        <td>{formatChatTimestamp(chat.created_at, chatFormatter ?? undefined)}</td>
+                        <td suppressHydrationWarning>{formatChatTimestamp(chat.created_at, chatFormatter ?? undefined)}</td>
                         <td>{formatNumber(chat.message_count)}</td>
                         <td>
                           {chat.is_mission ? (
@@ -1600,6 +1811,190 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
             </section>
           </div>
         )}
+
+        {activeTab === "admin" && (
+          <div className="tab-section">
+            <section className="section">
+              <h2 className="section-title">🛠 Admin Controls</h2>
+              <p className="muted-text">Monitor database health and trigger on-demand reloads.</p>
+
+              {adminError && <div className="error-banner">{adminError}</div>}
+
+              <div className="stats-grid" style={{ marginTop: "1rem" }}>
+                <article className="stat-card">
+                  <p className="stat-label">Database Engine</p>
+                  <p className="stat-value" style={{ fontSize: "1.5rem" }}>
+                    {adminStatus ? (adminStatus.engine === "postgres" ? "PostgreSQL" : "SQLite") : adminLoading ? "Loading…" : "Unknown"}
+                  </p>
+                  <p className="stat-sublabel">
+                    Last update:{" "}
+                    {adminStatus?.last_update ? (
+                      <span suppressHydrationWarning>
+                        {formatDateTime(adminStatus.last_update, headerFormatter ?? undefined)}
+                      </span>
+                    ) : (
+                      "Not available"
+                    )}
+                  </p>
+                  <p className="stat-sublabel">
+                    Data load time:{" "}
+                    {adminStatus?.last_duration_seconds != null
+                      ? `${adminStatus.last_duration_seconds.toFixed(2)}s`
+                      : "Not available"}
+                  </p>
+                </article>
+
+                <article className="stat-card">
+                  <p className="stat-label">Row Counts</p>
+                  <ul style={{ listStyle: "none", padding: 0, margin: "0.75rem 0 0" }}>
+                    <li>👥 Users: {formatNumber(adminStatus?.row_counts.users ?? 0)}</li>
+                    <li>💬 Chats: {formatNumber(adminStatus?.row_counts.chats ?? 0)}</li>
+                    <li>🧠 Models: {formatNumber(adminStatus?.row_counts.models ?? 0)}</li>
+                  </ul>
+                </article>
+
+                <article className="stat-card">
+                  <p className="stat-label">Reload Mode</p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.75rem" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <input
+                        type="radio"
+                        name="reload-mode"
+                        value="upsert"
+                        checked={reloadMode === "upsert"}
+                        onChange={() => setReloadMode("upsert")}
+                      />
+                      Upsert (merge records)
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <input
+                        type="radio"
+                        name="reload-mode"
+                        value="truncate"
+                        checked={reloadMode === "truncate"}
+                        onChange={() => setReloadMode("truncate")}
+                      />
+                      Truncate (full reset)
+                    </label>
+                    {truncateDisabledForUsers && (
+                      <span className="muted-text" style={{ fontSize: "0.8rem" }}>
+                        Truncate is only supported for the “Reload All” action.
+                      </span>
+                    )}
+                  </div>
+                </article>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: "0.75rem",
+                  marginTop: "1.5rem",
+                }}
+              >
+                <button
+                  type="button"
+                  className="filter-button"
+                  onClick={() => handleReload("all")}
+                  disabled={adminLoading}
+                  style={{ backgroundColor: "#2563eb", color: "#fff" }}
+                >
+                  {adminLoading ? "Working…" : `Reload All (${reloadMode})`}
+                </button>
+                <button
+                  type="button"
+                  className="filter-button secondary"
+                  onClick={() => handleReload("models")}
+                  disabled={adminLoading}
+                >
+                  Reload Models
+                </button>
+                <button
+                  type="button"
+                  className="filter-button secondary"
+                  onClick={() => handleReload("users")}
+                  disabled={adminLoading || truncateDisabledForUsers}
+                  title={truncateDisabledForUsers ? "Switch to upsert mode to reload users." : undefined}
+                >
+                  Reload Users
+                </button>
+                <button
+                  type="button"
+                  className="filter-button secondary"
+                  onClick={() => handleReload("chats")}
+                  disabled={adminLoading}
+                >
+                  Reload Chats
+                </button>
+                <button
+                  type="button"
+                  className="filter-button"
+                  onClick={loadAdminStatus}
+                  disabled={adminLoading}
+                >
+                  Refresh Status
+                </button>
+              </div>
+
+              {adminLoading && (
+                <p className="muted-text" style={{ marginTop: "0.75rem" }}>Processing admin request…</p>
+              )}
+
+              {lastReloadRuns.length > 0 && (
+                <div
+                  style={{
+                    marginTop: "1rem",
+                    padding: "0.75rem 1rem",
+                    borderRadius: "8px",
+                    backgroundColor: "#ecfdf5",
+                    border: "1px solid #34d399",
+                    color: "#047857",
+                  }}
+                >
+                  <strong>Latest action:</strong> {lastRunSummary}
+                </div>
+              )}
+
+              <div className="table-wrapper" style={{ marginTop: "1.5rem" }}>
+                {adminStatus && adminStatus.recent_runs.length > 0 ? (
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Resource</th>
+                        <th scope="col">Mode</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Previous Count</th>
+                        <th scope="col">New Records</th>
+                        <th scope="col">Total Records</th>
+                        <th scope="col">Finished</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adminStatus.recent_runs.map((run, index) => (
+                        <tr key={`${run.resource}-${run.finished_at ?? index}`}>
+                          <td>{run.resource}</td>
+                          <td>{run.mode}</td>
+                          <td>{run.status}</td>
+                          <td>{typeof run.previous_count === "number" ? formatNumber(run.previous_count) : "—"}</td>
+                          <td>{typeof run.new_records === "number" ? formatNumber(run.new_records) : "—"}</td>
+                          <td>{typeof run.total_records === "number" ? formatNumber(run.total_records) : "—"}</td>
+                          <td suppressHydrationWarning>
+                            {run.finished_at
+                              ? formatDateTime(run.finished_at, headerFormatter ?? undefined)
+                              : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p className="muted-text">No reload activity recorded yet.</p>
+                )}
+              </div>
+            </section>
+          </div>
+        )}
       </section>
       {selectedChat && (
         <div
@@ -1637,7 +2032,10 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
             </div>
             <div className="chat-modal-meta">
               <span>
-                <strong>Start:</strong> {formatChatTimestamp(selectedChat.created_at, chatFormatter ?? undefined)}
+                <strong>Start:</strong>{" "}
+                <span suppressHydrationWarning>
+                  {formatChatTimestamp(selectedChat.created_at, chatFormatter ?? undefined)}
+                </span>
               </span>
               <span>
                 <strong>Messages:</strong> {formatNumber(selectedChat.message_count)}
@@ -1681,7 +2079,7 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                           {message.content ? message.content : "(no content)"}
                         </div>
                         {timestampLabel !== "N/A" && (
-                          <span className="chat-bubble-timestamp">{timestampLabel}</span>
+                          <span className="chat-bubble-timestamp" suppressHydrationWarning>{timestampLabel}</span>
                         )}
                       </div>
                     </div>

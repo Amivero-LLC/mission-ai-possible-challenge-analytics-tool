@@ -1,17 +1,36 @@
 from __future__ import annotations
 
+import logging
 import os
-from typing import Optional
+from typing import Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
-from .schemas import ChallengesResponse, DashboardResponse, SortOption, UsersResponse
+from .db import Base, engine, get_engine_info
+from .schemas import (
+    ChallengesResponse,
+    DashboardResponse,
+    DatabaseStatus,
+    ReloadRequest,
+    ReloadRun,
+    SortOption,
+    UsersResponse,
+)
 from .services.dashboard import (
     build_challenges_response,
     build_dashboard_response,
     build_users_response,
+    reload_all,
+    reload_chats,
+    reload_models,
+    reload_users,
 )
+from .services.data_store import get_latest_status, get_recent_logs, get_row_counts
+
+
+logger = logging.getLogger(__name__)
 
 # FastAPI instance serves data to the analytics frontend.
 app = FastAPI(title="Mission Dashboard API", version="1.0.0")
@@ -24,6 +43,71 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _ensure_reload_log_columns() -> None:
+    info = get_engine_info()
+    column_definitions = {
+        "previous_count": "previous_count INTEGER",
+        "new_records": "new_records INTEGER",
+        "total_count": "total_count INTEGER",
+        "duration_seconds": "duration_seconds FLOAT",
+    }
+
+    with engine.begin() as connection:
+        for column, definition in column_definitions.items():
+            if info.engine == "sqlite":
+                try:
+                    connection.execute(text(f"ALTER TABLE reload_logs ADD COLUMN {definition}"))
+                except Exception as exc:  # pragma: no cover - best effort upgrade
+                    if "duplicate column name" in str(exc).lower():
+                        continue
+                    logger.debug("Skipping column %s migration: %s", column, exc)
+            else:
+                connection.execute(text(f"ALTER TABLE reload_logs ADD COLUMN IF NOT EXISTS {definition}"))
+
+
+@app.on_event("startup")
+def startup_event() -> None:
+    Base.metadata.create_all(bind=engine)
+    _ensure_reload_log_columns()
+
+    try:
+        row_counts = get_row_counts()
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning("Unable to determine initial row counts: %s", exc)
+        row_counts = {}
+
+    if row_counts.get("chats"):
+        return
+
+    hostname = os.getenv("OPEN_WEBUI_HOSTNAME") or os.getenv("OPEN_WEB_UI_HOSTNAME")
+    api_key = os.getenv("OPEN_WEBUI_API_KEY")
+    if not hostname or not api_key:
+        return
+
+    try:
+        # Trigger a refresh to seed the database on first launch.
+        build_dashboard_response(force_refresh=True)
+    except HTTPException as exc:
+        logger.warning("Startup data refresh failed: %s", exc.detail)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning("Startup data refresh failed: %s", exc)
+
+
+def _to_reload_run(payload: Dict[str, object]) -> ReloadRun:
+    return ReloadRun(
+        resource=str(payload.get("resource", "unknown")),
+        mode=str(payload.get("mode", "upsert")),
+        status=str(payload.get("status", "success")),
+        rows=payload.get("rows"),
+        message=payload.get("message"),
+        finished_at=payload.get("finished_at"),
+        previous_count=payload.get("previous_count"),
+        new_records=payload.get("new_records"),
+        total_records=payload.get("total_records"),
+        duration_seconds=payload.get("duration_seconds"),
+    )
 
 
 @app.get("/health")
@@ -195,3 +279,67 @@ def get_challenges() -> ChallengesResponse:
         raise exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/admin/db/status", response_model=DatabaseStatus)
+def get_database_status() -> DatabaseStatus:
+    """Return metadata about the configured database and recent reload activity."""
+    info = get_engine_info()
+    row_counts = get_row_counts()
+    latest = get_latest_status()
+    last_update = latest.finished_at if latest and latest.finished_at else None
+    last_duration = latest.duration_seconds if latest else None
+
+    logs = get_recent_logs(limit=20)
+
+    deduped: Dict[tuple[str, str], ReloadRun] = {}
+    for log in logs:
+        key = (log.resource, log.mode)
+        if key in deduped:
+            continue
+        deduped[key] = ReloadRun(
+            resource=log.resource,
+            mode=log.mode,
+            status=log.status,
+            rows=log.rows_affected,
+            message=log.message,
+            finished_at=log.finished_at,
+            previous_count=log.previous_count,
+            new_records=log.new_records,
+            total_records=log.total_count,
+            duration_seconds=log.duration_seconds,
+        )
+
+    runs = list(deduped.values())
+
+    return DatabaseStatus(
+        engine=info.engine,
+        row_counts=row_counts,
+        last_update=last_update,
+        last_duration_seconds=last_duration,
+        recent_runs=runs,
+    )
+
+
+@app.post("/admin/db/reload", response_model=List[ReloadRun])
+def reload_all_resources(options: ReloadRequest = Body(default=ReloadRequest())) -> List[ReloadRun]:
+    results = reload_all(mode=options.mode)
+    return [_to_reload_run(item) for item in results]
+
+
+@app.post("/admin/db/reload/users", response_model=ReloadRun)
+def reload_users_resource(options: ReloadRequest = Body(default=ReloadRequest())) -> ReloadRun:
+    result = reload_users(mode=options.mode)
+    return _to_reload_run(result)
+
+
+@app.post("/admin/db/reload/chats", response_model=ReloadRun)
+def reload_chats_resource(options: ReloadRequest = Body(default=ReloadRequest())) -> ReloadRun:
+    result = reload_chats(mode=options.mode)
+    return _to_reload_run(result)
+
+
+@app.post("/admin/db/reload/models", response_model=ReloadRun)
+def reload_models_resource(options: ReloadRequest = Body(default=ReloadRequest())) -> ReloadRun:
+    result = reload_models(mode=options.mode)
+    return _to_reload_run(result)

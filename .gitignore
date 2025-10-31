@@ -74,3 +74,4 @@ pnpm-debug.log*
 # Docker-managed volumes
 ##########################
 frontend_node_modules/
+*.sqlite

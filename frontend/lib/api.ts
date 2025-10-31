@@ -1,3 +1,4 @@
+import type { DatabaseStatus, ReloadMode, ReloadResource, ReloadRun } from "../types/admin";
 import type { DashboardResponse, SortOption } from "../types/dashboard";
 
 /**
@@ -120,4 +121,47 @@ export async function refreshData(): Promise<{
   }
 
   return response.json();
+}
+
+export async function fetchDatabaseStatus(): Promise<DatabaseStatus> {
+  const baseUrl = resolveBaseUrl();
+  const url = new URL("/admin/db/status", baseUrl);
+
+  const response = await fetch(url.toString(), { cache: "no-store" });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Request failed with ${response.status}`);
+  }
+
+  return response.json() as Promise<DatabaseStatus>;
+}
+
+export async function reloadDatabase(
+  resource: ReloadResource,
+  mode: ReloadMode = "upsert",
+): Promise<ReloadRun[]> {
+  const baseUrl = resolveBaseUrl();
+  const endpoint = resource === "all" ? "/admin/db/reload" : `/admin/db/reload/${resource}`;
+  const url = new URL(endpoint, baseUrl);
+
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ mode }),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Request failed with ${response.status}`);
+  }
+
+  if (resource === "all") {
+    return response.json() as Promise<ReloadRun[]>;
+  }
+
+  const payload = (await response.json()) as ReloadRun;
+  return [payload];
 }

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -193,3 +193,28 @@ class ChallengeWithUsers(BaseModel):
 class ChallengesResponse(BaseModel):
     generated_at: datetime
     challenges: List[ChallengeWithUsers] = Field(default_factory=list)
+
+
+class ReloadRun(BaseModel):
+    resource: str
+    mode: str
+    status: str
+    rows: Optional[int] = None
+    message: Optional[str] = None
+    finished_at: Optional[datetime] = None
+    previous_count: Optional[int] = None
+    new_records: Optional[int] = None
+    total_records: Optional[int] = None
+    duration_seconds: Optional[float] = None
+
+
+class DatabaseStatus(BaseModel):
+    engine: str
+    row_counts: Dict[str, int]
+    last_update: Optional[datetime] = None
+    last_duration_seconds: Optional[float] = None
+    recent_runs: List[ReloadRun] = Field(default_factory=list)
+
+
+class ReloadRequest(BaseModel):
+    mode: str = Field(default="upsert", pattern="^(upsert|truncate)$")
