@@ -4,10 +4,15 @@ import logging
 import os
 from typing import Dict, List, Optional
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from .auth import models as auth_models  # noqa: F401
+from .auth.dependencies import get_current_user, require_admin
+from .auth.models import AuthUser
+from .auth.routes import admin_router as auth_admin_router
+from .auth.routes import auth_router, setup_router
 from .db import Base, engine, get_engine_info
 from .schemas import (
     ChallengesResponse,
@@ -43,6 +48,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(setup_router)
+app.include_router(auth_router)
+app.include_router(auth_admin_router)
 
 
 def _ensure_reload_log_columns() -> None:
@@ -115,6 +124,11 @@ def health_check() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/status/health")
+def status_health() -> dict:
+    return health_check()
+
+
 @app.get("/dashboard", response_model=DashboardResponse)
 def get_dashboard(
     sort_by: SortOption = Query(default=SortOption.completions),
@@ -124,6 +138,7 @@ def get_dashboard(
     status: Optional[str] = Query(default=None, min_length=1),
     data_file: Optional[str] = Query(default=None),
     user_names_file: Optional[str] = Query(default=None),
+    current_user: AuthUser = Depends(get_current_user),
 ) -> DashboardResponse:
     # Delegate heavy lifting to the dashboard service while keeping HTTP layer thin.
     try:
@@ -143,7 +158,7 @@ def get_dashboard(
 
 
 @app.post("/refresh")
-def refresh_data() -> dict:
+def refresh_data(current_user: AuthUser = Depends(require_admin)) -> dict:
     """
     Force a refresh of data from Open WebUI API.
 
@@ -178,7 +193,7 @@ def refresh_data() -> dict:
 
 
 @app.get("/users", response_model=UsersResponse)
-def get_users() -> UsersResponse:
+def get_users(current_user: AuthUser = Depends(get_current_user)) -> UsersResponse:
     """
     Get a list of all users with their attempted/completed challenges.
 
@@ -227,7 +242,7 @@ def get_users() -> UsersResponse:
 
 
 @app.get("/challenges", response_model=ChallengesResponse)
-def get_challenges() -> ChallengesResponse:
+def get_challenges(current_user: AuthUser = Depends(get_current_user)) -> ChallengesResponse:
     """
     Get a list of all challenges with users who attempted/completed them.
 
@@ -282,7 +297,7 @@ def get_challenges() -> ChallengesResponse:
 
 
 @app.get("/admin/db/status", response_model=DatabaseStatus)
-def get_database_status() -> DatabaseStatus:
+def get_database_status(current_user: AuthUser = Depends(require_admin)) -> DatabaseStatus:
     """Return metadata about the configured database and recent reload activity."""
     info = get_engine_info()
     row_counts = get_row_counts()
@@ -322,24 +337,36 @@ def get_database_status() -> DatabaseStatus:
 
 
 @app.post("/admin/db/reload", response_model=List[ReloadRun])
-def reload_all_resources(options: ReloadRequest = Body(default=ReloadRequest())) -> List[ReloadRun]:
+def reload_all_resources(
+    options: ReloadRequest = Body(default=ReloadRequest()),
+    current_user: AuthUser = Depends(require_admin),
+) -> List[ReloadRun]:
     results = reload_all(mode=options.mode)
     return [_to_reload_run(item) for item in results]
 
 
 @app.post("/admin/db/reload/users", response_model=ReloadRun)
-def reload_users_resource(options: ReloadRequest = Body(default=ReloadRequest())) -> ReloadRun:
+def reload_users_resource(
+    options: ReloadRequest = Body(default=ReloadRequest()),
+    current_user: AuthUser = Depends(require_admin),
+) -> ReloadRun:
     result = reload_users(mode=options.mode)
     return _to_reload_run(result)
 
 
 @app.post("/admin/db/reload/chats", response_model=ReloadRun)
-def reload_chats_resource(options: ReloadRequest = Body(default=ReloadRequest())) -> ReloadRun:
+def reload_chats_resource(
+    options: ReloadRequest = Body(default=ReloadRequest()),
+    current_user: AuthUser = Depends(require_admin),
+) -> ReloadRun:
     result = reload_chats(mode=options.mode)
     return _to_reload_run(result)
 
 
 @app.post("/admin/db/reload/models", response_model=ReloadRun)
-def reload_models_resource(options: ReloadRequest = Body(default=ReloadRequest())) -> ReloadRun:
+def reload_models_resource(
+    options: ReloadRequest = Body(default=ReloadRequest()),
+    current_user: AuthUser = Depends(require_admin),
+) -> ReloadRun:
     result = reload_models(mode=options.mode)
     return _to_reload_run(result)

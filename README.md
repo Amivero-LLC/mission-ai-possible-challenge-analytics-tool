@@ -63,6 +63,20 @@ make up
 
 This builds both images, starts the containers, and mounts the repository for hot reload. Use `make down` when you are finished and `make logs` to tail the stack.
 
+### Makefile shortcuts
+
+The repository ships with an expanded Makefile to streamline common workflows:
+
+- `make install` – create/update the Python virtualenv and install frontend dependencies.
+- `make backend-dev` – run the FastAPI server locally with `uvicorn --reload`.
+- `make frontend-dev` – start the Next.js development server.
+- `make backend-test` / `make frontend-lint` – execute backend pytest suite or frontend ESLint checks.
+- `make frontend-build` – build the production-ready React bundle.
+- `make test` – run backend tests and frontend lint together.
+- `make up` / `make down` / `make logs` – manage the Docker Compose stack.
+- `make backend-up` / `make frontend-up` – rebuild and run only one service in Docker.
+- `make clean` – remove `.venv` and `frontend/node_modules` to reset local installs.
+
 ### Run Locally (manual terminals)
 
 ```bash
@@ -79,6 +93,19 @@ npm run dev
 ```
 
 Open http://localhost:3000 to access the dashboard. By default the frontend talks to http://localhost:8000.
+
+### Test the stack
+
+```bash
+# Backend
+pip install -r backend/requirements.txt
+pytest backend/tests/test_auth.py
+
+# Frontend
+cd frontend
+npm install
+npm run lint
+```
 
 ### Run Locally (helper script)
 
@@ -98,22 +125,32 @@ make up
 
 The compose stack mounts the repository, enables hot reload, and shares `data/` into both containers. Use `make down` to stop services and `make logs` to tail output.
 
+> ℹ️ **Dependency updates**  
+> The frontend service mounts a named `frontend_node_modules` volume for faster reloads. If you add or update npm packages (for example, Tailwind CSS), remove that volume so the container reinstalls dependencies:
+>
+> ```bash
+> docker compose down
+> docker volume rm mission-ai-possible-challenge-analytics-tool_frontend_node_modules
+> docker compose up --build
+> ```
+
 ## Dashboard Features
 
 The enhanced dashboard provides comprehensive mission analytics with:
 
 ### **Filtering & Search**
-- 📅 **Date Range Filter** - Filter by creation date (Date From/Date To)
-- 🎯 **Challenge Dropdown** - Select specific missions from available challenges
-- 👤 **User Name Dropdown** - Filter by participant (shows friendly names)
-- ✅ **Status Filter** - View All/Completed/In Progress missions
-- 🔄 **Leaderboard Sort** - Sort by Completions/Attempts/Efficiency
+- 📆 **Week Selector** – Focus analytics on a specific challenge week or view all weeks at once.
+- 🎯 **Challenge Filter** – Drill into one mission while preserving week context.
+- ✅ **Status Filter** – Toggle between Completed, In Progress, Not Started, or the full dataset.
+- 👥 **User Filter** – View performance for a single teammate using friendly display names.
+- ♻️ **Quick Reset & Reload** – Reset filters or trigger a data reload from Open WebUI with one click.
 
 ### **Data Views**
-- **📊 Overview Tab** - Leaderboard with rankings, timestamps, and mission breakdown cards
-- **💬 All Chats Tab** - Complete chat history with timestamps and mission status
-- **🎯 Missions Tab** - Detailed mission statistics and success rates
-- **🤖 Models Tab** - AI model usage analytics
+- **📊 Overview Tab** – Leaderboards, participation stats, and mission health cards.
+- **🏅 Challenge Results Tab** – Detailed challenge attempts with sortable columns.
+- **💬 All Chats Tab** – Chat transcripts with metadata and mission context.
+- **🎯 Missions Tab** – Completion trends and success rates per mission.
+- **🛠 Admin Workspace** – Configuration, user approvals, and audit trail pages with shared navigation.
 
 ### **Export Options**
 - 📥 **CSV Export** - Download current tab data as CSV file
@@ -157,6 +194,31 @@ Frontend:
 - `FRONTEND_PORT` – port exposed by Docker compose (defaults to 3000)
 
 The provided `.env.example` captures the common variables for local development.
+
+### Authentication configuration
+
+The analytics portal now supports secure login via local credentials and Microsoft Office 365 OAuth. Control the active mechanisms with the `AUTH_MODE` environment variable:
+
+- `DEFAULT` – local username/password only
+- `HYBRID` – local credentials + Microsoft 365 OAuth (Entra ID)
+- `OAUTH` – Microsoft 365 OAuth only (local login/registration disabled)
+
+Key environment variables (see `.env.example` for a quick-start template):
+
+- `AUTH_MODE` – one of `DEFAULT`, `HYBRID`, `OAUTH`
+- `SESSION_SECRET` – strong secret used to sign JWT access/refresh tokens
+- `SESSION_COOKIE_SECURE`, `SESSION_COOKIE_SAME_SITE`, `SESSION_COOKIE_DOMAIN` – cookie hardening controls
+- `OAUTH_TENANT_ID`, `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET` – Azure Entra application credentials (web app)
+- `OAUTH_REDIRECT_URL` – must match the redirect URI configured in Azure AD (e.g. `https://your-host/auth/oauth/callback`)
+- `OAUTH_SCOPES` – include `openid profile email offline_access` for user info + refresh tokens
+- `NEXT_PUBLIC_AUTH_MODE` – surfacing the current auth mode to the Next.js client
+- `SMTP_*` – optional; configure to enable password-reset and verification emails for local accounts
+
+**Bootstrap flow:** when no auth users exist, navigate to `/setup` to create the first administrator. This initial step always uses a strong local password regardless of `AUTH_MODE`.
+
+**Office 365 OAuth:** register a new app in Azure AD / Entra ID, enable the Authorization Code + PKCE flow, and grant the `openid`, `profile`, and `email` scopes. Use the generated client ID/secret and tenant ID to populate the environment variables above.
+
+**User approvals:** after bootstrap, new accounts (local or OAuth) remain locked until an administrator marks them as approved in the Admin → Users view. Email addresses must be pre-populated (sync from Open WebUI or manual CSV imports).
 
 ## API Endpoints
 

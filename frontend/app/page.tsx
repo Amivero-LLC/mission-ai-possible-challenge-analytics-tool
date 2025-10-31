@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { fetchDashboard } from "../lib/api";
 import DashboardPage from "../components/DashboardPage";
 
@@ -13,7 +14,8 @@ import DashboardPage from "../components/DashboardPage";
  *     the initial payload is embedded in the HTML.
  */
 export default async function HomePage() {
-  const dashboard = await fetchDashboard();
+  const cookieHeader = cookies().toString();
+  const dashboard = await fetchDashboard({}, cookieHeader || undefined);
 
   return <DashboardPage initialData={dashboard} />;
 }

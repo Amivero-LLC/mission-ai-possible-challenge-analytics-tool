@@ -26,7 +26,7 @@ export interface DashboardQuery {
  * Returns:
  *   string – absolute URL used to build dashboard requests.
  */
-function resolveBaseUrl() {
+export function resolveBaseUrl() {
   if (typeof window === "undefined") {
     return (
       process.env.API_BASE_URL ??
@@ -59,6 +59,7 @@ function resolveBaseUrl() {
  */
 export async function fetchDashboard(
   query: DashboardQuery = {},
+  authCookies?: string,
 ): Promise<DashboardResponse> {
   const baseUrl = resolveBaseUrl();
   const url = new URL("/dashboard", baseUrl);
@@ -75,7 +76,16 @@ export async function fetchDashboard(
   }
 
   // Disable HTTP caching so the UI always reflects the most recent OpenWebUI snapshot.
-  const response = await fetch(url.toString(), { cache: "no-store" });
+  const headers: Record<string, string> = {};
+  if (authCookies) {
+    headers.Cookie = authCookies;
+  }
+
+  const response = await fetch(url.toString(), {
+    cache: "no-store",
+    credentials: "include",
+    headers,
+  });
 
   if (!response.ok) {
     const message = await response.text();
@@ -101,7 +111,7 @@ export async function fetchDashboard(
  * Example:
  *   const result = await refreshData();
  */
-export async function refreshData(): Promise<{
+export async function refreshData(authCookies?: string): Promise<{
   status: string;
   message: string;
   last_fetched: string;
@@ -110,9 +120,18 @@ export async function refreshData(): Promise<{
   const baseUrl = resolveBaseUrl();
   const url = new URL("/refresh", baseUrl);
 
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (authCookies) {
+    headers.Cookie = authCookies;
+  }
+
   const response = await fetch(url.toString(), {
     method: "POST",
     cache: "no-store",
+    credentials: "include",
+    headers,
   });
 
   if (!response.ok) {
@@ -123,11 +142,20 @@ export async function refreshData(): Promise<{
   return response.json();
 }
 
-export async function fetchDatabaseStatus(): Promise<DatabaseStatus> {
+export async function fetchDatabaseStatus(authCookies?: string): Promise<DatabaseStatus> {
   const baseUrl = resolveBaseUrl();
   const url = new URL("/admin/db/status", baseUrl);
 
-  const response = await fetch(url.toString(), { cache: "no-store" });
+  const headers: Record<string, string> = {};
+  if (authCookies) {
+    headers.Cookie = authCookies;
+  }
+
+  const response = await fetch(url.toString(), {
+    cache: "no-store",
+    credentials: "include",
+    headers,
+  });
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message || `Request failed with ${response.status}`);
@@ -139,17 +167,24 @@ export async function fetchDatabaseStatus(): Promise<DatabaseStatus> {
 export async function reloadDatabase(
   resource: ReloadResource,
   mode: ReloadMode = "upsert",
+  authCookies?: string,
 ): Promise<ReloadRun[]> {
   const baseUrl = resolveBaseUrl();
   const endpoint = resource === "all" ? "/admin/db/reload" : `/admin/db/reload/${resource}`;
   const url = new URL(endpoint, baseUrl);
 
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (authCookies) {
+    headers.Cookie = authCookies;
+  }
+
   const response = await fetch(url.toString(), {
     method: "POST",
     cache: "no-store",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    credentials: "include",
+    headers,
     body: JSON.stringify({ mode }),
   });
 

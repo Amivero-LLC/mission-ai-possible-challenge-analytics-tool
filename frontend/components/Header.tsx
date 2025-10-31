@@ -1,6 +1,12 @@
 'use client';
 
 import Image from 'next/image';
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useMemo, useState } from 'react';
+
+import { fetchCurrentUser, logout } from '../lib/auth';
+import type { AuthUser } from '../types/auth';
 
 interface HeaderProps {
   onExportCSV?: () => void;
@@ -9,18 +15,90 @@ interface HeaderProps {
 }
 
 /**
- * Header component with navigation and authentication placeholder
+ * Primary application header with authenticated navigation.
  *
- * Features:
- * - App branding with logo/name
- * - Responsive navigation menu
- * - Export dropdown with CSV/Excel options
- * - Login/Logout placeholder buttons
- * - Mobile-friendly hamburger menu
+ * Highlights:
+ * - Renders brand, dashboard nav, and the admin dropdown when available.
+ * - Surfaces export controls provided by the dashboard content layer.
+ * - Shows the signed-in user with a working sign-out action (or redirect to login).
+ * - Adapts styling on admin routes to reinforce elevated privileges.
  */
 export default function Header({ onExportCSV, onExportExcel, isLoading = false }: HeaderProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const isAdminRoute = pathname?.startsWith('/admin') ?? false;
+  const canAccessAdmin = user?.role === 'ADMIN' || isAdminRoute;
+
+  const primaryNavItems = useMemo(
+    () => [
+      {
+        href: '/',
+        label: 'Dashboard',
+        isActive: pathname === '/',
+      },
+    ],
+    [pathname],
+  );
+
+  const adminLinks = useMemo(() => {
+    const path = pathname ?? '';
+    return [
+      {
+        href: '/admin/config',
+        label: 'Configuration',
+        isActive: path === '/admin' || path.startsWith('/admin/config'),
+      },
+      {
+        href: '/admin/users',
+        label: 'User approvals',
+        isActive: path.startsWith('/admin/users'),
+      },
+      {
+        href: '/admin/audit',
+        label: 'Audit trail',
+        isActive: path.startsWith('/admin/audit'),
+      },
+    ];
+  }, [pathname]);
+  const adminMenuActive = isAdminRoute;
+  const headerClassName = `app-header${isAdminRoute ? ' app-header--admin' : ''}`;
+  const userNameClass = `font-semibold ${isAdminRoute ? 'text-slate-100' : 'text-slate-900'}`;
+  const userRoleClass = `text-xs ${isAdminRoute ? 'text-slate-300' : 'text-slate-500'}`;
+
+  useEffect(() => {
+    let active = true;
+    async function load() {
+      try {
+        const profile = await fetchCurrentUser();
+        if (active) {
+          setUser(profile);
+        }
+      } catch (error) {
+        if (active) {
+          router.push('/auth/login');
+        }
+      }
+    }
+    load();
+    return () => {
+      active = false;
+    };
+  }, [router]);
+
+  async function handleLogout() {
+    try {
+      setIsLoggingOut(true);
+      await logout();
+      router.push('/auth/login');
+    } finally {
+      setIsLoggingOut(false);
+    }
+  }
+
   return (
-    <header className="app-header">
+    <header className={headerClassName}>
       <div className="header-container">
         <div className="header-brand">
           <div className="brand-logo">
@@ -40,7 +118,52 @@ export default function Header({ onExportCSV, onExportExcel, isLoading = false }
 
         <nav className="header-nav">
           <div className="nav-links">
-            <a href="/" className="nav-link active">Dashboard</a>
+            {primaryNavItems.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`nav-link${item.isActive ? ' active' : ''}`}
+              >
+                {item.label}
+              </Link>
+            ))}
+
+            {canAccessAdmin && (
+              <div className="nav-dropdown">
+                <button
+                  type="button"
+                  className={`nav-link nav-link-button${adminMenuActive ? ' active' : ''}`}
+                >
+                  Admin
+                  <svg
+                    aria-hidden="true"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </button>
+                <div className="nav-dropdown-menu">
+                  <div className="nav-dropdown-panel">
+                    {adminLinks.map((link) => (
+                      <Link
+                        key={link.href}
+                        href={link.href}
+                        className={`nav-dropdown-link${link.isActive ? ' active' : ''}`}
+                      >
+                        {link.label}
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Export Dropdown */}
             {onExportCSV && onExportExcel && (
@@ -147,7 +270,26 @@ export default function Header({ onExportCSV, onExportExcel, isLoading = false }
           </div>
 
           <div className="header-actions">
-            <button className="btn btn-outline">Login</button>
+            {user ? (
+              <div className="flex items-center gap-3">
+                <div className="text-right text-sm">
+                  <p className={userNameClass}>{user.username ?? user.email}</p>
+                  <p className={userRoleClass}>{user.role}</p>
+                </div>
+                <button
+                  className="btn btn-outline"
+                  type="button"
+                  onClick={handleLogout}
+                  disabled={isLoggingOut}
+                >
+                  {isLoggingOut ? 'Signing out...' : 'Sign out'}
+                </button>
+              </div>
+            ) : (
+              <button className="btn btn-outline" type="button" onClick={() => router.push('/auth/login')}>
+                Sign in
+              </button>
+            )}
           </div>
         </nav>
 
