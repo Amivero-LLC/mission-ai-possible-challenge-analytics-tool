@@ -195,8 +195,12 @@ def verify_email_route(payload: EmailVerificationRequest, db: Session = Depends(
 
 
 @auth_router.get("/oauth/start", response_model=OAuthStartResponse)
-def oauth_start(redirect_to: Optional[str] = Query(default=None), db: Session = Depends(get_db)) -> OAuthStartResponse:
-    return start_oauth_flow(db, redirect_to=redirect_to)
+def oauth_start(
+    redirect_to: Optional[str] = Query(default=None),
+    redirect_uri: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+) -> OAuthStartResponse:
+    return start_oauth_flow(db, redirect_to=redirect_to, redirect_uri=redirect_uri)
 
 
 @auth_router.post("/oauth/callback", response_model=TokenPair)

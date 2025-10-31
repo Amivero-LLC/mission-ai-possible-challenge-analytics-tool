@@ -243,7 +243,7 @@ def _record_audit(
     db.flush()
 
 
-def start_oauth_flow(db: Session, redirect_to: str | None = None) -> OAuthStartResponse:
+def start_oauth_flow(db: Session, redirect_to: str | None = None, redirect_uri: str | None = None) -> OAuthStartResponse:
     if get_auth_mode() == AuthMode.DEFAULT and not bootstrap_required(db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="OAuth login disabled.")
 
@@ -261,7 +261,7 @@ def start_oauth_flow(db: Session, redirect_to: str | None = None) -> OAuthStartR
     )
     db.flush()
 
-    url = build_authorization_url(state=state, code_challenge=challenge, redirect_uri=redirect_to)
+    url = build_authorization_url(state=state, code_challenge=challenge, redirect_uri=redirect_uri)
     return OAuthStartResponse(authorization_url=url, state=state)
 
 

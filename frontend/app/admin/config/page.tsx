@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AdminNavigation from "../../../components/AdminNavigation";
 import Header from "../../../components/Header";
 import { fetchDatabaseStatus, reloadDatabase } from "../../../lib/api";
+import { toast } from "../../../lib/toast";
 import type { DatabaseStatus, ReloadMode, ReloadRun, ReloadResource } from "../../../types/admin";
 
 const defaultHeaderFormatter = new Intl.DateTimeFormat("en-US", {
@@ -74,12 +75,6 @@ function formatNumber(value: number | null | undefined) {
   return value.toLocaleString();
 }
 
-const toastAppearance: Record<"success" | "neutral" | "error", { background: string; border: string; color: string; icon: string }> = {
-  success: { background: "#ecfdf5", border: "#34d399", color: "#065f46", icon: "✓" },
-  neutral: { background: "#f3f4f6", border: "#d1d5db", color: "#374151", icon: "ℹ️" },
-  error: { background: "#fee2e2", border: "#f87171", color: "#b91c1c", icon: "⚠️" },
-};
-
 export default function AdminConfigPage() {
   const [adminStatus, setAdminStatus] = useState<DatabaseStatus | null>(null);
   const [adminLoading, setAdminLoading] = useState(false);
@@ -87,22 +82,12 @@ export default function AdminConfigPage() {
   const [reloadMode, setReloadMode] = useState<ReloadMode>("upsert");
   const [lastReloadRuns, setLastReloadRuns] = useState<ReloadRun[]>([]);
   const [headerFormatter, setHeaderFormatter] = useState<Intl.DateTimeFormat | null>(null);
-  const [toast, setToast] = useState<{ message: string; variant: "success" | "neutral" | "error" } | null>(null);
-  const toastTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastReloadTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const showToast = useCallback((message: string, variant: "success" | "neutral" | "error" = "neutral") => {
-    if (toastTimerRef.current) {
-      clearTimeout(toastTimerRef.current);
-    }
-    setToast({ message, variant });
-    toastTimerRef.current = setTimeout(() => setToast(null), 4000);
-  }, []);
-
   const summarizeRuns = useCallback(
-    (runs: ReloadRun[], scope: ReloadResource | "all" | null = null): { message: string; variant: "success" | "neutral" } => {
+    (runs: ReloadRun[], scope: ReloadResource | "all" | null = null): { message: string; variant: "success" | "default" } => {
       if (!runs || runs.length === 0) {
-        return { message: "Data synchronized.", variant: "neutral" };
+        return { message: "Data synchronized.", variant: "default" };
       }
 
       const trackedResources: ReloadResource[] = ["users", "models", "chats"];
@@ -138,7 +123,7 @@ export default function AdminConfigPage() {
             variant: "success",
           };
         }
-        return { message: "Data synchronized. No new records found.", variant: "neutral" };
+        return { message: "Data synchronized. No new records found.", variant: "default" };
       }
 
       const targetResource = scope && scope !== "all" ? scope : (runs[0]?.resource as ReloadResource | undefined);
@@ -159,11 +144,11 @@ export default function AdminConfigPage() {
         }
         return {
           message: `${label} synchronized. No new records found.`,
-          variant: "neutral",
+          variant: "default",
         };
       }
 
-      return { message: "Data synchronized.", variant: "neutral" };
+      return { message: "Data synchronized.", variant: "default" };
     },
     [],
   );
@@ -177,11 +162,11 @@ export default function AdminConfigPage() {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load configuration details.";
       setAdminError(message);
-      showToast(message, "error");
+      toast.error(message);
     } finally {
       setAdminLoading(false);
     }
-  }, [showToast]);
+  }, []);
 
   useEffect(() => {
     loadAdminStatus();
@@ -208,9 +193,6 @@ export default function AdminConfigPage() {
 
   useEffect(() => {
     return () => {
-      if (toastTimerRef.current) {
-        clearTimeout(toastTimerRef.current);
-      }
       if (lastReloadTimerRef.current) {
         clearTimeout(lastReloadTimerRef.current);
       }
@@ -235,16 +217,16 @@ export default function AdminConfigPage() {
         setAdminStatus(status);
 
         const { message, variant } = summarizeRuns(runs, resource);
-        showToast(message, variant);
+        toast({ type: variant, message });
       } catch (err) {
         const message = err instanceof Error ? err.message : "Reload failed";
         setAdminError(message);
-        showToast(message, "error");
+        toast.error(message);
       } finally {
         setAdminLoading(false);
       }
     },
-    [reloadMode, summarizeRuns, showToast],
+    [reloadMode, summarizeRuns],
   );
 
   const truncateDisabledForUsers = reloadMode === "truncate";
@@ -275,35 +257,6 @@ export default function AdminConfigPage() {
       <Header />
       <main className="page-root">
         <div className="dashboard-container space-y-6" style={{ position: "relative" }}>
-          {toast && (
-            <div
-              role="status"
-              aria-live="assertive"
-              style={{
-                position: "fixed",
-                top: "1rem",
-                right: "1rem",
-                minWidth: "260px",
-                maxWidth: "360px",
-                padding: "0.75rem 1rem",
-                borderRadius: "0.75rem",
-                border: `1px solid ${toastAppearance[toast.variant].border}`,
-                backgroundColor: toastAppearance[toast.variant].background,
-                color: toastAppearance[toast.variant].color,
-                boxShadow: "0 10px 25px rgba(0, 0, 0, 0.12)",
-                display: "flex",
-                alignItems: "center",
-                gap: "0.5rem",
-                zIndex: 1200,
-                pointerEvents: "none",
-                fontWeight: 500,
-              }}
-            >
-              <span style={{ fontSize: "1.1rem" }}>{toastAppearance[toast.variant].icon}</span>
-              <span style={{ flex: 1 }}>{toast.message}</span>
-            </div>
-          )}
-
           <section className="dashboard-header space-y-6">
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div>

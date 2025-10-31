@@ -2,10 +2,11 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 
 import { fetchCurrentUser, logout } from '../lib/auth';
+import { toast } from '../lib/toast';
 import type { AuthUser } from '../types/auth';
 
 interface HeaderProps {
@@ -26,6 +27,8 @@ interface HeaderProps {
 export default function Header({ onExportCSV, onExportExcel, isLoading = false }: HeaderProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const searchString = searchParams.toString();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const isAdminRoute = pathname?.startsWith('/admin') ?? false;
@@ -74,10 +77,30 @@ export default function Header({ onExportCSV, onExportExcel, isLoading = false }
         const profile = await fetchCurrentUser();
         if (active) {
           setUser(profile);
+          if (typeof window !== 'undefined') {
+            const marker = sessionStorage.getItem('maip_auth_notice');
+            if (marker === 'signed_in') {
+              toast.success('Signed in successfully.');
+              sessionStorage.removeItem('maip_auth_notice');
+            } else if (marker === 'logged_out') {
+              toast.info('Signed out successfully.');
+              sessionStorage.removeItem('maip_auth_notice');
+            }
+          }
         }
       } catch (error) {
         if (active) {
-          router.push('/auth/login');
+          const currentPath = pathname ?? '/';
+          const target = searchString ? `${currentPath}?${searchString}` : currentPath;
+          const params = new URLSearchParams();
+          params.set('reason', 'expired');
+          if (!target.startsWith('/auth/')) {
+            params.set('redirect', target || '/');
+          }
+          if (typeof window !== 'undefined') {
+            sessionStorage.setItem('maip_post_auth_redirect', target || '/');
+          }
+          router.push(`/auth/login?${params.toString()}`);
         }
       }
     }
@@ -85,21 +108,33 @@ export default function Header({ onExportCSV, onExportExcel, isLoading = false }
     return () => {
       active = false;
     };
-  }, [router]);
+  }, [pathname, router, searchString]);
 
   async function handleLogout() {
     try {
       setIsLoggingOut(true);
       await logout();
-      router.push('/auth/login');
+      const currentPath = pathname ?? '/';
+      const target = searchString ? `${currentPath}?${searchString}` : currentPath;
+      const params = new URLSearchParams();
+      params.set('status', 'logged_out');
+      if (!target.startsWith('/auth/')) {
+        params.set('redirect', target || '/');
+      }
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('maip_post_auth_redirect', target || '/');
+        sessionStorage.setItem('maip_auth_notice', 'logged_out');
+      }
+      router.push(`/auth/login?${params.toString()}`);
     } finally {
       setIsLoggingOut(false);
     }
   }
 
   return (
-    <header className={headerClassName}>
-      <div className="header-container">
+    <>
+      <header className={headerClassName}>
+        <div className="header-container">
         <div className="header-brand">
           <div className="brand-logo">
             <Image
@@ -303,5 +338,6 @@ export default function Header({ onExportCSV, onExportExcel, isLoading = false }
         </button>
       </div>
     </header>
+    </>
   );
 }

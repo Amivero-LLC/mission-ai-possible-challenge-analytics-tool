@@ -54,7 +54,20 @@ async function authRequest<TBody = unknown, TResult = unknown>(
   }
 
   if (!response.ok) {
-    const message = await response.text();
+    let message: string | undefined;
+    try {
+      const text = await response.text();
+      if (text) {
+        try {
+          const parsed = JSON.parse(text) as { detail?: string; message?: string };
+          message = parsed.detail ?? parsed.message ?? text;
+        } catch {
+          message = text;
+        }
+      }
+    } catch {
+      message = undefined;
+    }
     throw new Error(message || `Request failed with ${response.status}`);
   }
 
@@ -116,9 +129,17 @@ export async function resetPassword(payload: { token: string; password: string }
   });
 }
 
-export async function startOAuth(redirectTo?: string): Promise<OAuthStartResponse> {
-  const query = redirectTo ? `?redirect_to=${encodeURIComponent(redirectTo)}` : "";
-  return authRequest<undefined, OAuthStartResponse>(`/api/auth/oauth/start${query}`);
+export async function startOAuth(callbackUrl?: string, redirectTo?: string): Promise<OAuthStartResponse> {
+  const params = new URLSearchParams();
+  if (callbackUrl) {
+    params.set("redirect_uri", callbackUrl);
+  }
+  if (redirectTo) {
+    params.set("redirect_to", redirectTo);
+  }
+  const query = params.toString();
+  const suffix = query ? `?${query}` : "";
+  return authRequest<undefined, OAuthStartResponse>(`/api/auth/oauth/start${suffix}`);
 }
 
 export async function completeOAuth(payload: {

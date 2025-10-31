@@ -219,6 +219,78 @@ body {
   box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
 }
 
+@keyframes toast-enter-left {
+  0% {
+    transform: translateX(-120%);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes toast-exit-left {
+  0% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(-120%);
+    opacity: 0;
+  }
+}
+
+.toast-enter {
+  animation: toast-enter-left 0.28s ease-out forwards;
+}
+
+.toast-exit {
+  animation: toast-exit-left 0.2s ease-in forwards;
+}
+
+.auth-loading-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem;
+  z-index: 100;
+}
+
+.auth-loading-overlay__content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.auth-spinner {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 9999px;
+  border: 2px solid rgba(79, 70, 229, 0.2);
+  border-top-color: rgba(79, 70, 229, 0.9);
+  animation: authSpin 0.8s linear infinite;
+}
+
+.auth-spinner--lg {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-width: 3px;
+}
+
+@keyframes authSpin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
 .mobile-menu-btn {
   display: none;
   background: transparent;

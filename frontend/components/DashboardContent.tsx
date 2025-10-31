@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { fetchDashboard, reloadDatabase } from "../lib/api";
+import { toast } from "../lib/toast";
 import type { ReloadRun, ReloadResource } from "../types/admin";
 import type { DashboardResponse, SortOption, MissionDetail } from "../types/dashboard";
 
@@ -318,8 +319,6 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
   const [headerFormatter, setHeaderFormatter] = useState<Intl.DateTimeFormat | null>(null);
   const [chatFormatter, setChatFormatter] = useState<Intl.DateTimeFormat | null>(null);
   const [challengeFormatter, setChallengeFormatter] = useState<Intl.DateTimeFormat | null>(null);
-  const [toast, setToast] = useState<{ message: string; variant: "success" | "neutral" | "error" } | null>(null);
-  const toastTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Challenge Results sorting state
   type ChallengeResultSortKey = "user_name" | "status" | "num_attempts" | "first_attempt_time" | "completed_time" | "num_messages";
@@ -335,12 +334,6 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
   type AllChatsSortKey = "num" | "week" | "user_name" | "challenge_name" | "created_at" | "message_count" | "completed";
   const [allChatsSortKey, setAllChatsSortKey] = useState<AllChatsSortKey>("created_at");
   const [allChatsSortAsc, setAllChatsSortAsc] = useState(false);
-
-  const toastAppearance: Record<"success" | "neutral" | "error", { background: string; border: string; color: string; icon: string }> = {
-    success: { background: "#ecfdf5", border: "#34d399", color: "#065f46", icon: "✓" },
-    neutral: { background: "#f3f4f6", border: "#d1d5db", color: "#374151", icon: "ℹ️" },
-    error: { background: "#fee2e2", border: "#f87171", color: "#b91c1c", icon: "⚠️" },
-  };
 
   const handleFiltersChange = (key: keyof FilterState, value: string) => {
     setFilters((prev) => {
@@ -363,34 +356,26 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
       })
     : dashboard.summary.missions_list || [];
 
-const dataSourceLabel = useMemo(() => {
-  if (!dashboard.data_source) {
-    return "Unknown";
-  }
-  if (dashboard.data_source === "api") {
-    return "API";
-  }
-  if (dashboard.data_source === "database") {
-    return "Database";
-  }
-  if (dashboard.data_source === "file") {
-    return "File";
-  }
-  return dashboard.data_source;
-}, [dashboard.data_source]);
-
-  const showToast = useCallback((message: string, variant: "success" | "neutral" | "error" = "neutral") => {
-    if (toastTimerRef.current) {
-      clearTimeout(toastTimerRef.current);
+  const dataSourceLabel = useMemo(() => {
+    if (!dashboard.data_source) {
+      return "Unknown";
     }
-    setToast({ message, variant });
-    toastTimerRef.current = setTimeout(() => setToast(null), 4000);
-  }, []);
+    if (dashboard.data_source === "api") {
+      return "API";
+    }
+    if (dashboard.data_source === "database") {
+      return "Database";
+    }
+    if (dashboard.data_source === "file") {
+      return "File";
+    }
+    return dashboard.data_source;
+  }, [dashboard.data_source]);
 
   const summarizeRuns = useCallback(
-    (runs: ReloadRun[], scope: ReloadResource | "all" | null = null): { message: string; variant: "success" | "neutral" } => {
+    (runs: ReloadRun[], scope: ReloadResource | "all" | null = null): { message: string; variant: "success" | "default" } => {
       if (!runs || runs.length === 0) {
-        return { message: "Data synchronized.", variant: "neutral" };
+        return { message: "Data synchronized.", variant: "default" };
       }
 
       const trackedResources: ReloadResource[] = ["users", "models", "chats"];
@@ -422,7 +407,7 @@ const dataSourceLabel = useMemo(() => {
             variant: "success",
           };
         }
-        return { message: "Data synchronized. No new records found.", variant: "neutral" };
+        return { message: "Data synchronized. No new records found.", variant: "default" };
       }
 
       const targetResource = scope && scope !== "all" ? scope : (runs[0]?.resource as ReloadResource | undefined);
@@ -437,11 +422,11 @@ const dataSourceLabel = useMemo(() => {
         }
         return {
           message: `${label} synchronized. No new records found.`,
-          variant: "neutral",
+          variant: "default",
         };
       }
 
-      return { message: "Data synchronized.", variant: "neutral" };
+      return { message: "Data synchronized.", variant: "default" };
     },
     [],
   );
@@ -508,16 +493,16 @@ const dataSourceLabel = useMemo(() => {
       await applyFilters();
 
       const { message, variant } = summarizeRuns(runs, "all");
-      showToast(message, variant);
+      toast({ type: variant, message });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unable to load data into the database.";
       setError(message);
-      showToast(message, "error");
+      toast.error(message);
     } finally {
       setRefreshing(false);
       setHeaderLoading?.(false);
     }
-  }, [applyFilters, setHeaderLoading, showToast, summarizeRuns]);
+  }, [applyFilters, setHeaderLoading, summarizeRuns]);
 
   /**
    * Automatically apply filters when filter state changes.
@@ -669,14 +654,6 @@ const dataSourceLabel = useMemo(() => {
       setHeaderLoading(loading);
     }
   }, [loading, setHeaderLoading]);
-
-  useEffect(() => {
-    return () => {
-      if (toastTimerRef.current) {
-        clearTimeout(toastTimerRef.current);
-      }
-    };
-  }, []);
 
   /**
    * Sort challenge results based on the current sort key and direction
@@ -927,34 +904,6 @@ const dataSourceLabel = useMemo(() => {
 
   return (
     <div className="dashboard-container" style={{ position: "relative" }}>
-      {toast && (
-        <div
-          role="status"
-          aria-live="assertive"
-          style={{
-            position: "fixed",
-            top: "1rem",
-            right: "1rem",
-            minWidth: "260px",
-            maxWidth: "360px",
-            padding: "0.75rem 1rem",
-            borderRadius: "0.75rem",
-            border: `1px solid ${toastAppearance[toast.variant].border}`,
-            backgroundColor: toastAppearance[toast.variant].background,
-            color: toastAppearance[toast.variant].color,
-            boxShadow: "0 10px 25px rgba(0, 0, 0, 0.12)",
-            display: "flex",
-            alignItems: "center",
-            gap: "0.5rem",
-            zIndex: 1200,
-            pointerEvents: "none",
-            fontWeight: 500,
-          }}
-        >
-          <span style={{ fontSize: "1.1rem" }}>{toastAppearance[toast.variant].icon}</span>
-          <span style={{ flex: 1 }}>{toast.message}</span>
-        </div>
-      )}
       {/* Loading Overlay */}
       {loading && (
         <>

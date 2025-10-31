@@ -26,7 +26,13 @@ export default function OAuthCallbackPage() {
     async function finalize() {
       try {
         await completeOAuth({ code, state, redirect_uri: `${window.location.origin}/auth/oauth/callback` });
-        router.push("/");
+        const target =
+          (typeof window !== "undefined" ? sessionStorage.getItem("maip_post_auth_redirect") : null) || "/";
+        if (typeof window !== "undefined") {
+          sessionStorage.setItem("maip_auth_notice", "signed_in");
+          sessionStorage.removeItem("maip_post_auth_redirect");
+        }
+        router.replace(target || "/");
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unable to complete sign in";
         setStatusMessage(message);
