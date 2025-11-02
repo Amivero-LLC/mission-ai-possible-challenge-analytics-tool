@@ -1,24 +1,48 @@
 #!/usr/bin/env python3
 """Debug script to test week mapping"""
 
-import sys
 import json
+import sqlite3
+import sys
 from pathlib import Path
 
 # Direct implementation without imports
 DATA_DIR = Path(__file__).parent.parent / "data"
-MODELS_CACHE_FILE = DATA_DIR / "models.json"
+SQLITE_DB_FILE = DATA_DIR / "mission_dashboard.sqlite"
 
-def _load_json_cache(file_path):
-    """Load data from a JSON cache file if it exists."""
-    if not file_path.exists():
+
+def _load_models_from_sqlite(db_path: Path):
+    """Load model records from the SQLite database."""
+    if not db_path.exists():
         return None
+
+    conn = None
     try:
-        with open(file_path, 'r') as f:
-            data = json.load(f)
-            return data if isinstance(data, list) else None
-    except (json.JSONDecodeError, IOError):
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT data FROM models").fetchall()
+    except sqlite3.DatabaseError:
         return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+    models = []
+    for row in rows:
+        payload = row["data"]
+        if isinstance(payload, str):
+            try:
+                models.append(json.loads(payload))
+            except json.JSONDecodeError:
+                continue
+        elif isinstance(payload, (bytes, bytearray)):
+            try:
+                models.append(json.loads(payload.decode("utf-8")))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+        elif isinstance(payload, dict):
+            models.append(payload)
+    return models if models else None
 
 def _extract_model_metadata(records):
     """Extract metadata from model records"""
@@ -172,9 +196,9 @@ def _extract_model_metadata(records):
 
     return lookup, mission_aliases, alias_to_primary, week_mapping, points_mapping, difficulty_mapping
 
-cached_models = _load_json_cache(MODELS_CACHE_FILE)
+cached_models = _load_models_from_sqlite(SQLITE_DB_FILE)
 if not cached_models:
-    print("ERROR: Could not load models.json")
+    print("ERROR: Could not load models from mission_dashboard.sqlite")
     sys.exit(1)
 
 model_lookup, mission_model_aliases, alias_to_primary, week_mapping, points_mapping, difficulty_mapping = _extract_model_metadata(cached_models)

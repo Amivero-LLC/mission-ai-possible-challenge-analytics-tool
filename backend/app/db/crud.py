@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -28,6 +28,64 @@ def _parse_datetime(value: Optional[str | int | float]) -> Optional[datetime]:
         return datetime.fromisoformat(text)
     except ValueError:
         return None
+
+
+def _normalize_str(value: object) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_int(value: object) -> Optional[int]:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _extract_maip_metadata(record: dict) -> Tuple[Optional[str], Optional[int], Optional[str]]:
+    maip_week: Optional[str] = None
+    maip_points: Optional[int] = None
+    maip_difficulty: Optional[str] = None
+
+    def walk(node: object) -> None:
+        nonlocal maip_week, maip_points, maip_difficulty
+        if not isinstance(node, dict):
+            return
+
+        if maip_week is None and "maip_week" in node:
+            maip_week = _normalize_str(node.get("maip_week"))
+
+        if maip_points is None:
+            for key in ("maip_points_value", "maip_points"):
+                if key in node:
+                    maip_points = _normalize_int(node.get(key))
+                    if maip_points is not None:
+                        break
+
+        if maip_difficulty is None:
+            for key in ("maip_difficulty_level", "maip_difficulty"):
+                if key in node:
+                    maip_difficulty = _normalize_str(node.get(key))
+                    if maip_difficulty is not None:
+                        break
+
+        for value in node.values():
+            if isinstance(value, dict):
+                walk(value)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        walk(item)
+
+    walk(record)
+    return maip_week, maip_points, maip_difficulty
 
 
 def upsert_users(session: Session, records: Iterable[dict]) -> int:
@@ -82,16 +140,23 @@ def upsert_models(session: Session, records: Iterable[dict]) -> int:
             or record.get("preset")
             or record.get("model")
         )
+        maip_week, maip_points, maip_difficulty = _extract_maip_metadata(record)
 
         if existing:
             existing.name = display_name
             existing.data = record
+            existing.maip_week = maip_week
+            existing.maip_points = maip_points
+            existing.maip_difficulty = maip_difficulty
         else:
             session.add(
                 Model(
                     id=model_id,
                     name=display_name,
                     data=record,
+                    maip_week=maip_week,
+                    maip_points=maip_points,
+                    maip_difficulty=maip_difficulty,
                 )
             )
         affected += 1

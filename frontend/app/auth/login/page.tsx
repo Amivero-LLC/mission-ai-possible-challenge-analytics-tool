@@ -101,7 +101,6 @@ export default function LoginPage() {
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unable to sign in";
         setBanner({ message, tone: "error" });
-      } finally {
         setIsSubmitting(false);
       }
     },

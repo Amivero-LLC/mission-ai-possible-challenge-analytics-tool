@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query
@@ -35,7 +36,46 @@ from .services.dashboard import (
 from .services.data_store import get_latest_status, get_recent_logs, get_row_counts
 
 
+def _configure_logging() -> None:
+    """
+    Configure backend logging once during application start-up.
+
+    This sets a sane default format and log level that can be overridden using
+    the BACKEND_LOG_LEVEL environment variable. When Uvicorn or another server
+    already configured root handlers, only the log level is updated.
+    """
+    level_name = os.getenv("BACKEND_LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter(
+            fmt="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        handler.setFormatter(formatter)
+        root_logger.addHandler(handler)
+
+    root_logger.setLevel(level)
+
+    # Reduce verbosity from noisy dependencies while keeping warnings.
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+
+_configure_logging()
+
 logger = logging.getLogger(__name__)
+
+
+def _normalize_to_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 # FastAPI instance serves data to the analytics frontend.
 app = FastAPI(title="Mission Dashboard API", version="1.0.0")
@@ -76,10 +116,32 @@ def _ensure_reload_log_columns() -> None:
                 connection.execute(text(f"ALTER TABLE reload_logs ADD COLUMN IF NOT EXISTS {definition}"))
 
 
+def _ensure_model_columns() -> None:
+    info = get_engine_info()
+    column_definitions = {
+        "maip_week": "maip_week VARCHAR",
+        "maip_difficulty": "maip_difficulty VARCHAR",
+        "maip_points": "maip_points INTEGER",
+    }
+
+    with engine.begin() as connection:
+        for column, definition in column_definitions.items():
+            if info.engine == "sqlite":
+                try:
+                    connection.execute(text(f"ALTER TABLE models ADD COLUMN {definition}"))
+                except Exception as exc:  # pragma: no cover - best effort upgrade
+                    if "duplicate column name" in str(exc).lower():
+                        continue
+                    logger.debug("Skipping column %s migration: %s", column, exc)
+            else:
+                connection.execute(text(f"ALTER TABLE models ADD COLUMN IF NOT EXISTS {definition}"))
+
+
 @app.on_event("startup")
 def startup_event() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_reload_log_columns()
+    _ensure_model_columns()
 
     try:
         row_counts = get_row_counts()
@@ -302,7 +364,7 @@ def get_database_status(current_user: AuthUser = Depends(require_admin)) -> Data
     info = get_engine_info()
     row_counts = get_row_counts()
     latest = get_latest_status()
-    last_update = latest.finished_at if latest and latest.finished_at else None
+    last_update = _normalize_to_utc(latest.finished_at) if latest and latest.finished_at else None
     last_duration = latest.duration_seconds if latest else None
 
     logs = get_recent_logs(limit=20)
@@ -318,7 +380,7 @@ def get_database_status(current_user: AuthUser = Depends(require_admin)) -> Data
             status=log.status,
             rows=log.rows_affected,
             message=log.message,
-            finished_at=log.finished_at,
+            finished_at=_normalize_to_utc(log.finished_at).isoformat() if log.finished_at else None,
             previous_count=log.previous_count,
             new_records=log.new_records,
             total_records=log.total_count,

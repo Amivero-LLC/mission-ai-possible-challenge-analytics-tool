@@ -6,6 +6,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 import requests
@@ -50,133 +51,16 @@ from ..schemas import (
 )
 
 
-# Cache file paths
-USERS_CACHE_FILE = Path(DATA_DIR) / "users.json"
-MODELS_CACHE_FILE = Path(DATA_DIR) / "models.json"
-CHATS_JSON_CACHE_FILE = Path(DATA_DIR) / "chats.json"
-FETCH_METADATA_FILE = Path(DATA_DIR) / "fetch_metadata.json"
-
-
 logger = logging.getLogger(__name__)
 
 
-def _load_json_cache(file_path: Path) -> Optional[List[dict]]:
-    """Load data from a JSON cache file if it exists."""
-    if not file_path.exists():
+def _normalize_to_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Ensure timestamps are timezone-aware UTC datetimes for consistent serialization."""
+    if dt is None:
         return None
-    try:
-        with open(file_path, 'r') as f:
-            data = json.load(f)
-            return data if isinstance(data, list) else None
-    except (json.JSONDecodeError, IOError):
-        return None
-
-
-def _save_json_cache(file_path: Path, data: List[dict]) -> None:
-    """Save data to a JSON cache file."""
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(file_path, 'w') as f:
-        json.dump(data, f, indent=2)
-
-
-def _save_chats_json(chats: List[dict]) -> None:
-    """
-    Save full chat data to JSON file for caching.
-
-    Args:
-        chats: List of chat records from Open WebUI
-    """
-    if not chats:
-        return
-
-    CHATS_JSON_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(CHATS_JSON_CACHE_FILE, 'w', encoding='utf-8') as f:
-        json.dump(chats, f, indent=2)
-
-
-def _load_chats_json() -> Optional[List[dict]]:
-    """Load cached chat data from JSON file."""
-    if not CHATS_JSON_CACHE_FILE.exists():
-        logger.info(f"Cache file does not exist: {CHATS_JSON_CACHE_FILE}")
-        return None
-
-    try:
-        logger.info(f"Loading cached chats from {CHATS_JSON_CACHE_FILE}")
-        with open(CHATS_JSON_CACHE_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            if not isinstance(data, list):
-                logger.warning(f"Cached data is not a list, got: {type(data)}")
-                return None
-            logger.info(f"Successfully loaded {len(data)} chats from cache")
-            return data
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON decode error loading cache: {e}")
-        return None
-    except IOError as e:
-        logger.error(f"IO error loading cache: {e}")
-        return None
-    except Exception as e:
-        logger.error(f"Unexpected error loading cache: {e}")
-        return None
-
-
-def _save_fetch_metadata(source: str = "api") -> None:
-    """
-    Save metadata about the data fetch.
-
-    Args:
-        source: Either "api" or "file" to indicate where data came from
-    """
-    metadata = {
-        "last_fetched": datetime.now(timezone.utc).isoformat(),
-        "source": source
-    }
-
-    FETCH_METADATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(FETCH_METADATA_FILE, 'w') as f:
-        json.dump(metadata, f, indent=2)
-
-
-def _read_fetch_metadata() -> Optional[dict]:
-    """Read fetch metadata if it exists."""
-    if not FETCH_METADATA_FILE.exists():
-        return None
-
-    try:
-        with open(FETCH_METADATA_FILE, 'r') as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError):
-        return None
-
-
-def _merge_and_update_cache(
-    file_path: Path,
-    new_records: List[dict],
-    id_key: str = "id"
-) -> List[dict]:
-    """
-    Merge new records with existing cache, updating existing records by ID.
-
-    Args:
-        file_path: Path to the cache file
-        new_records: List of new records to merge
-        id_key: The key to use for identifying unique records
-
-    Returns:
-        The merged list of records
-    """
-    existing = _load_json_cache(file_path) or []
-    existing_map = {record.get(id_key): record for record in existing if record.get(id_key)}
-
-    # Update existing records and add new ones
-    for record in new_records:
-        record_id = record.get(id_key)
-        if record_id:
-            existing_map[record_id] = record
-
-    merged = list(existing_map.values())
-    _save_json_cache(file_path, merged)
-    return merged
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 def _extract_model_metadata(records: Iterable[dict]) -> Tuple[Dict[str, str], Set[str], Dict[str, str], Dict[str, str], Dict[str, int], Dict[str, str]]:
@@ -357,24 +241,6 @@ def _extract_model_metadata(records: Iterable[dict]) -> Tuple[Dict[str, str], Se
 
     return lookup, mission_aliases, alias_to_primary, week_mapping, points_mapping, difficulty_mapping
 
-
-def _read_cached_users() -> Optional[Dict[str, dict]]:
-    """Read users from the cache file and return as a user_id -> user info mapping."""
-    cached_users = _load_json_cache(USERS_CACHE_FILE)
-    if not cached_users:
-        return None
-
-    user_map: Dict[str, dict] = {}
-    for user in cached_users:
-        user_id = user.get("user_id")
-        name = user.get("name")
-        email = user.get("email", "")
-        if user_id and name:
-            user_map[user_id] = {"name": name, "email": email}
-
-    return user_map if user_map else None
-
-
 def _load_model_metadata(
     *,
     force_refresh: bool = False,
@@ -386,29 +252,40 @@ def _load_model_metadata(
     Order of precedence:
         1. Fresh API payload when ``force_refresh`` is True and credentials are configured.
         2. Persisted database rows.
-        3. Legacy JSON cache (automatically re-hydrated into the database).
     """
     records: List[dict] = []
+    logger.debug("Loading model metadata (force_refresh=%s, mode=%s)", force_refresh, mode)
 
     if force_refresh:
         remote_records = _fetch_remote_models()
         if remote_records:
             persist_models(remote_records, mode=mode)
             records = remote_records
+            logger.info("Loaded %d models from OpenWebUI API (force refresh)", len(remote_records))
 
     if not records:
         records = load_models()
+        if records:
+            logger.debug("Loaded %d models from database cache", len(records))
 
     if not records:
-        cached_models = _load_json_cache(MODELS_CACHE_FILE) or []
-        if cached_models:
-            persist_models(cached_models, mode="upsert")
-            records = cached_models
+        remote_records = _fetch_remote_models()
+        if remote_records:
+            persist_models(remote_records, mode="upsert")
+            records = remote_records
+            logger.info("Loaded %d models from OpenWebUI API (fallback)", len(remote_records))
 
     if not records:
+        logger.warning("No model metadata available after remote and local lookups")
         return {}, set(), {}, {}, {}, {}
 
-    return _extract_model_metadata(records)
+    metadata = _extract_model_metadata(records)
+    logger.debug(
+        "Extracted model metadata with %d aliases and %d mission-tagged models",
+        len(metadata[0]),
+        len(metadata[1]),
+    )
+    return metadata
 
 
 def _fetch_remote_chats() -> Optional[List[dict]]:
@@ -417,10 +294,13 @@ def _fetch_remote_chats() -> Optional[List[dict]]:
     api_key = os.getenv("OPEN_WEBUI_API_KEY")
 
     if not hostname or not api_key:
+        logger.debug("Skipping remote chat fetch; credentials not configured")
         return None
 
     url = f"{hostname.rstrip('/')}/api/v1/chats/all/db"
     headers = {"Authorization": f"Bearer {api_key}"}
+    logger.debug("Requesting chats from OpenWebUI at %s", url)
+    start_time = perf_counter()
 
     try:
         response = requests.get(url, headers=headers, timeout=30)
@@ -437,6 +317,9 @@ def _fetch_remote_chats() -> Optional[List[dict]]:
     data = response.json()
     if not isinstance(data, list):
         raise HTTPException(status_code=502, detail="Unexpected response format from OpenWebUI")
+
+    duration = perf_counter() - start_time
+    logger.info("Fetched %d chats from OpenWebUI in %.2fs", len(data), duration)
 
     return data
 
@@ -502,10 +385,13 @@ def _fetch_remote_users() -> Optional[Tuple[Dict[str, dict], List[dict]]]:
     api_key = os.getenv("OPEN_WEBUI_API_KEY")
 
     if not hostname or not api_key:
+        logger.debug("Skipping remote user fetch; credentials not configured")
         return None
 
     url = f"{hostname.rstrip('/')}/api/v1/users/all"
     headers = {"Authorization": f"Bearer {api_key}"}
+    logger.debug("Requesting users from OpenWebUI at %s", url)
+    start_time = perf_counter()
 
     try:
         response = requests.get(url, headers=headers, timeout=30)
@@ -513,10 +399,10 @@ def _fetch_remote_users() -> Optional[Tuple[Dict[str, dict], List[dict]]]:
     except requests.exceptions.HTTPError as exc:  # pragma: no cover - surface auth errors
         raise HTTPException(status_code=502, detail=f"Failed to fetch users from OpenWebUI: {exc}") from exc
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:  # pragma: no cover - network failure
-        logger.warning("OpenWebUI users fetch failed (%s); falling back to cached users", exc)
+        logger.warning("OpenWebUI users fetch failed (%s); falling back to stored users", exc)
         return None
     except requests.exceptions.RequestException as exc:  # pragma: no cover - network failure
-        logger.warning("OpenWebUI users fetch failed (%s); falling back to cached users", exc)
+        logger.warning("OpenWebUI users fetch failed (%s); falling back to stored users", exc)
         return None
 
     payload = response.json()
@@ -530,8 +416,7 @@ def _fetch_remote_users() -> Optional[Tuple[Dict[str, dict], List[dict]]]:
     elif not isinstance(payload, list):
         raise HTTPException(status_code=502, detail="Unexpected users response format from OpenWebUI")
 
-    # Normalize user records for caching
-    user_records = []
+    # Normalize user records for downstream consumers
     raw_records: List[dict] = []
     user_map: Dict[str, dict] = {}
     for item in payload:
@@ -543,18 +428,16 @@ def _fetch_remote_users() -> Optional[Tuple[Dict[str, dict], List[dict]]]:
         display = name.strip() or (email.split("@")[0] if email else user_id[:8])
         user_map[user_id] = {"name": display, "email": email}
 
-        # Store normalized user record for cache
-        user_records.append({
-            "user_id": user_id,
-            "name": display,
-            "email": email
-        })
         item_copy = dict(item)
         item_copy.setdefault("name", display)
         raw_records.append(item_copy)
 
-    # Save/update cache
-    _merge_and_update_cache(USERS_CACHE_FILE, user_records, id_key="user_id")
+    duration = perf_counter() - start_time
+    logger.info(
+        "Fetched %d users from OpenWebUI in %.2fs",
+        len(raw_records),
+        duration,
+    )
 
     return user_map, raw_records
 
@@ -565,27 +448,46 @@ def _fetch_remote_models() -> Optional[List[dict]]:
     api_key = os.getenv("OPEN_WEBUI_API_KEY")
 
     if not hostname or not api_key:
+        logger.debug("Skipping remote model fetch; credentials not configured")
         return None
 
     url = f"{hostname.rstrip('/')}/api/v1/models"
     headers = {"Authorization": f"Bearer {api_key}"}
+    logger.debug("Requesting models from OpenWebUI at %s", url)
+    start_time = perf_counter()
 
     try:
         response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
-    except requests.exceptions.RequestException:
+    except requests.exceptions.RequestException as exc:
+        logger.warning("OpenWebUI models fetch failed (%s)", exc)
         return None
 
     payload = response.json()
+    records: List[dict] | dict | None
     if isinstance(payload, dict):
-        records = payload.get("data") or payload.get("models") or []
+        records = payload.get("data") or payload.get("models") or payload.get("items") or []
     elif isinstance(payload, list):
         records = payload
     else:
+        records = []
+
+    if isinstance(records, dict):
+        for key in ("items", "data", "models", "results"):
+            nested = records.get(key)
+            if isinstance(nested, list):
+                records = nested
+                break
+        else:
+            # Fallback: keep only dict values that are themselves dicts to avoid iterating over keys.
+            records = [value for value in records.values() if isinstance(value, dict)]
+
+    if not isinstance(records, list):
+        logger.error("Unexpected OpenWebUI models payload structure: %s", type(records))
         return None
 
-    if records:
-        _save_json_cache(MODELS_CACHE_FILE, records)
+    duration = perf_counter() - start_time
+    logger.info("Fetched %d models from OpenWebUI in %.2fs", len(records), duration)
 
     return records
 
@@ -1053,6 +955,16 @@ def build_dashboard_response(
         reload_mode: Controls how data is persisted when a refresh occurs. Supports
             ``"upsert"`` (default) and ``"truncate"`` for a full reset.
     """
+    logger.info(
+        "Building dashboard response (force_refresh=%s, reload_mode=%s, sort_by=%s, filters: week=%s, challenge=%s, user=%s, status=%s)",
+        force_refresh,
+        reload_mode,
+        sort_by.value,
+        filter_week,
+        filter_challenge,
+        filter_user,
+        filter_status,
+    )
     # Resolve user names file relative to DATA_DIR by default
     resolved_user_names = user_names_file or str(Path(DATA_DIR) / "user_names.json")
 
@@ -1068,8 +980,6 @@ def build_dashboard_response(
         chats_payload = _fetch_remote_chats()
         if chats_payload is not None:
             persist_chats(chats_payload, mode=reload_mode)
-            _save_chats_json(chats_payload)
-            _save_fetch_metadata(source="api")
             data_source = "api"
 
     if not chats_payload:
@@ -1078,11 +988,11 @@ def build_dashboard_response(
             data_source = "database"
 
     if not chats_payload:
-        chats_payload = _load_chats_json()
-        if chats_payload:
-            data_source = "file"
+        fallback_remote = _fetch_remote_chats()
+        if fallback_remote:
+            chats_payload = fallback_remote
             persist_chats(chats_payload, mode="upsert")
-            _save_fetch_metadata(source="file")
+            data_source = "api"
 
     if not chats_payload:
         latest_export = find_latest_export()
@@ -1097,7 +1007,6 @@ def build_dashboard_response(
                 chats_payload = json.load(f)
             data_source = "file"
             persist_chats(chats_payload, mode="upsert")
-            _save_fetch_metadata(source="file")
         except (FileNotFoundError, json.JSONDecodeError) as exc:
             logger.error("Failed to load fallback export: %s", exc)
             raise HTTPException(
@@ -1112,6 +1021,12 @@ def build_dashboard_response(
         )
 
     filtered_chats = _filter_chats_by_mission_models(chats_payload, mission_model_aliases)
+    logger.info(
+        "Prepared %d mission-related chats from %d total chats (data source=%s)",
+        len(filtered_chats),
+        len(chats_payload),
+        data_source,
+    )
 
     user_info_map: Dict[str, dict] = {}
     remote_users_payload: Optional[Tuple[Dict[str, dict], List[dict]]] = None
@@ -1133,15 +1048,6 @@ def build_dashboard_response(
         if remote_users_payload:
             user_info_map, raw_users = remote_users_payload
             persist_users(raw_users, mode="upsert")
-        else:
-            cached_users = _read_cached_users() or {}
-            if cached_users:
-                cache_records = [
-                    {"user_id": uid, "name": info.get("name"), "email": info.get("email", "")}
-                    for uid, info in cached_users.items()
-                ]
-                persist_users(cache_records, mode="upsert")
-            user_info_map = cached_users
 
     user_names_only = {uid: details.get("name", "") for uid, details in user_info_map.items()}
 
@@ -1200,17 +1106,18 @@ def build_dashboard_response(
     last_fetched = None
     if latest_log and latest_log.finished_at:
         try:
-            last_fetched = latest_log.finished_at.isoformat()
+            normalized = _normalize_to_utc(latest_log.finished_at)
+            last_fetched = normalized.isoformat() if normalized else None
         except AttributeError:
             last_fetched = None
 
-    fetch_metadata = _read_fetch_metadata()
-    if data_source == "database" and fetch_metadata:
-        if not last_fetched:
-            last_fetched = fetch_metadata.get("last_fetched")
-        data_source = fetch_metadata.get("source") or data_source
-    elif not last_fetched and fetch_metadata:
-        last_fetched = fetch_metadata.get("last_fetched")
+    logger.info(
+        "Dashboard response generated (missions=%d, leaderboard entries=%d, export rows=%d, users=%d)",
+        len(missions),
+        len(leaderboard),
+        len(export_data),
+        len(user_info_map),
+    )
 
     return DashboardResponse(
         generated_at=datetime.now(timezone.utc),
@@ -1245,7 +1152,8 @@ def _build_reload_result(resource: str, requested_mode: str, rows: int | None) -
         duration = log.duration_seconds
         if log.finished_at:
             try:
-                finished_at = log.finished_at.isoformat()
+                normalized = _normalize_to_utc(log.finished_at)
+                finished_at = normalized.isoformat() if normalized else None
             except AttributeError:
                 finished_at = None
 
@@ -1268,11 +1176,17 @@ def reload_models(mode: str = "upsert") -> Dict[str, Any]:
     if mode_normalized not in {"upsert", "truncate"}:
         raise HTTPException(status_code=400, detail="mode must be 'upsert' or 'truncate'")
 
+    logger.info("Starting model reload (mode=%s)", mode_normalized)
     records = _fetch_remote_models()
     if records is None:
         raise HTTPException(status_code=503, detail="Unable to fetch models from Open WebUI.")
 
-    rows = persist_models(records, mode=mode_normalized)
+    try:
+        rows = persist_models(records, mode=mode_normalized)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.exception("Model reload failed")
+        raise HTTPException(status_code=500, detail=f"Model reload failed: {exc}") from exc
+    logger.info("Model reload completed with %s rows processed", rows)
     return _build_reload_result("models", mode_normalized, rows)
 
 
@@ -1287,12 +1201,18 @@ def reload_users(mode: str = "upsert") -> Dict[str, Any]:
             detail="Truncate mode for users is only supported via the combined reload endpoint.",
         )
 
+    logger.info("Starting user reload (mode=%s)", mode_normalized)
     payload = _fetch_remote_users()
     if payload is None:
         raise HTTPException(status_code=503, detail="Unable to fetch users from Open WebUI.")
 
     _user_map, raw_users = payload
-    rows = persist_users(raw_users, mode=mode_normalized)
+    try:
+        rows = persist_users(raw_users, mode=mode_normalized)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.exception("User reload failed")
+        raise HTTPException(status_code=500, detail=f"User reload failed: {exc}") from exc
+    logger.info("User reload completed with %s rows processed", rows)
     return _build_reload_result("users", mode_normalized, rows)
 
 
@@ -1301,13 +1221,17 @@ def reload_chats(mode: str = "upsert") -> Dict[str, Any]:
     if mode_normalized not in {"upsert", "truncate"}:
         raise HTTPException(status_code=400, detail="mode must be 'upsert' or 'truncate'")
 
+    logger.info("Starting chat reload (mode=%s)", mode_normalized)
     chats_payload = _fetch_remote_chats()
     if chats_payload is None:
         raise HTTPException(status_code=503, detail="Unable to fetch chats from Open WebUI.")
 
-    rows = persist_chats(chats_payload, mode=mode_normalized)
-    _save_chats_json(chats_payload)
-    _save_fetch_metadata(source="api")
+    try:
+        rows = persist_chats(chats_payload, mode=mode_normalized)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.exception("Chat reload failed")
+        raise HTTPException(status_code=500, detail=f"Chat reload failed: {exc}") from exc
+    logger.info("Chat reload completed with %s rows processed", rows)
     return _build_reload_result("chats", mode_normalized, rows)
 
 
@@ -1316,6 +1240,8 @@ def reload_all(mode: str = "upsert") -> List[Dict[str, Any]]:
     if mode_normalized not in {"upsert", "truncate"}:
         raise HTTPException(status_code=400, detail="mode must be 'upsert' or 'truncate'")
 
+    logger.info("Starting full data reload (mode=%s)", mode_normalized)
+    overall_start = perf_counter()
     models_data = _fetch_remote_models()
     users_payload = _fetch_remote_users()
     chats_payload = _fetch_remote_chats()
@@ -1326,29 +1252,57 @@ def reload_all(mode: str = "upsert") -> List[Dict[str, Any]]:
             detail="Unable to fetch data from Open WebUI. Verify credentials and try again.",
         )
 
+    logger.debug(
+        "Fetched remote payload sizes -> models=%s, users=%s, chats=%s",
+        len(models_data),
+        len(users_payload[1]),
+        len(chats_payload),
+    )
+
     _, raw_users = users_payload
     results: List[Dict[str, Any]] = []
 
-    rows_models = persist_models(models_data, mode=mode_normalized)
+    try:
+        rows_models = persist_models(models_data, mode=mode_normalized)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.exception("Full reload failed during model persistence")
+        raise HTTPException(status_code=500, detail=f"Model persistence failed: {exc}") from exc
     results.append(_build_reload_result("models", mode_normalized, rows_models))
 
     if mode_normalized == "truncate":
         # Remove chats first to satisfy foreign key constraints before truncating users.
-        persist_chats([], mode="truncate")
-        rows_users = persist_users(raw_users, mode="truncate")
+        try:
+            persist_chats([], mode="truncate")
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.exception("Full reload failed while truncating chats")
+            raise HTTPException(status_code=500, detail=f"Chat truncation failed: {exc}") from exc
+
+        try:
+            rows_users = persist_users(raw_users, mode="truncate")
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.exception("Full reload failed during user persistence (truncate)")
+            raise HTTPException(status_code=500, detail=f"User persistence failed: {exc}") from exc
         results.append(_build_reload_result("users", "truncate", rows_users))
 
-        rows_chats = persist_chats(chats_payload, mode="upsert")
-        _save_chats_json(chats_payload)
-        _save_fetch_metadata(source="api")
+        try:
+            rows_chats = persist_chats(chats_payload, mode="upsert")
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.exception("Full reload failed during chat persistence after truncate")
+            raise HTTPException(status_code=500, detail=f"Chat persistence failed: {exc}") from exc
         chat_result = _build_reload_result("chats", "truncate", rows_chats)
     else:
-        rows_users = persist_users(raw_users, mode="upsert")
+        try:
+            rows_users = persist_users(raw_users, mode="upsert")
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.exception("Full reload failed during user persistence")
+            raise HTTPException(status_code=500, detail=f"User persistence failed: {exc}") from exc
         results.append(_build_reload_result("users", "upsert", rows_users))
 
-        rows_chats = persist_chats(chats_payload, mode="upsert")
-        _save_chats_json(chats_payload)
-        _save_fetch_metadata(source="api")
+        try:
+            rows_chats = persist_chats(chats_payload, mode="upsert")
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.exception("Full reload failed during chat persistence")
+            raise HTTPException(status_code=500, detail=f"Chat persistence failed: {exc}") from exc
         chat_result = _build_reload_result("chats", "upsert", rows_chats)
 
     results.append(chat_result)
@@ -1357,7 +1311,7 @@ def reload_all(mode: str = "upsert") -> List[Dict[str, Any]]:
     aggregate_previous = sum((item.get("previous_count") or 0) for item in results if item.get("previous_count") is not None)
     aggregate_new = sum((item.get("new_records") or 0) for item in results if item.get("new_records") is not None)
     aggregate_total = sum((item.get("total_records") or 0) for item in results if item.get("total_records") is not None)
-    aggregate_duration = sum((item.get("duration_seconds") or 0) for item in results if item.get("duration_seconds") is not None)
+    overall_elapsed = perf_counter() - overall_start
 
     def _none_if_empty(value: float | int | None) -> float | int | None:
         return value if value or value == 0 else None
@@ -1371,7 +1325,7 @@ def reload_all(mode: str = "upsert") -> List[Dict[str, Any]]:
         previous_count=_none_if_empty(aggregate_previous),
         new_records=_none_if_empty(aggregate_new),
         total_count=_none_if_empty(aggregate_total),
-        duration_seconds=_none_if_empty(aggregate_duration),
+        duration_seconds=_none_if_empty(overall_elapsed),
     )
     results.append(
         {
@@ -1380,12 +1334,21 @@ def reload_all(mode: str = "upsert") -> List[Dict[str, Any]]:
             "status": aggregate_log.status,
             "rows": total_rows,
             "message": aggregate_log.message,
-            "finished_at": aggregate_log.finished_at.isoformat() if aggregate_log.finished_at else None,
+            "finished_at": (_normalize_to_utc(aggregate_log.finished_at).isoformat() if aggregate_log.finished_at else None),
             "previous_count": aggregate_log.previous_count,
             "new_records": aggregate_log.new_records,
             "total_records": aggregate_log.total_count,
             "duration_seconds": aggregate_log.duration_seconds,
         }
+    )
+
+    logger.info(
+        "Full data reload completed in %.2fs (models_rows=%s, users_rows=%s, chats_rows=%s, total_rows=%s)",
+        overall_elapsed,
+        results[0].get("rows"),
+        results[1].get("rows") if len(results) > 1 else None,
+        chat_result.get("rows"),
+        total_rows,
     )
 
     return results
@@ -1403,25 +1366,20 @@ def build_users_response() -> UsersResponse:
 
     chats_payload = load_chats()
     if not chats_payload:
-        cached_chats = _load_chats_json()
-        if cached_chats:
-            chats_payload = cached_chats
-            persist_chats(cached_chats, mode="upsert")
+        remote_chats = _fetch_remote_chats()
+        if remote_chats:
+            chats_payload = remote_chats
+            persist_chats(remote_chats, mode="upsert")
         else:
-            remote_chats = _fetch_remote_chats()
-            if remote_chats:
-                chats_payload = remote_chats
-                persist_chats(remote_chats, mode="upsert")
-            else:
-                latest_export = find_latest_export()
-                if not latest_export:
-                    raise HTTPException(
-                        status_code=503,
-                        detail="No data available. Please configure Open WebUI credentials or provide a chat export.",
-                    )
-                with open(latest_export, "r", encoding="utf-8") as f:
-                    chats_payload = json.load(f)
-                persist_chats(chats_payload, mode="upsert")
+            latest_export = find_latest_export()
+            if not latest_export:
+                raise HTTPException(
+                    status_code=503,
+                    detail="No data available. Please configure Open WebUI credentials or provide a chat export.",
+                )
+            with open(latest_export, "r", encoding="utf-8") as f:
+                chats_payload = json.load(f)
+            persist_chats(chats_payload, mode="upsert")
 
     filtered_chats = _filter_chats_by_mission_models(chats_payload, mission_model_aliases)
 
@@ -1431,14 +1389,6 @@ def build_users_response() -> UsersResponse:
         if remote_users_payload:
             user_info_map, raw_users = remote_users_payload
             persist_users(raw_users, mode="upsert")
-        else:
-            user_info_map = _read_cached_users() or {}
-            if user_info_map:
-                cache_records = [
-                    {"user_id": uid, "name": info.get("name"), "email": info.get("email", "")}
-                    for uid, info in user_info_map.items()
-                ]
-                persist_users(cache_records, mode="upsert")
 
     user_names_only = {uid: info.get("name", "") for uid, info in user_info_map.items()}
 
@@ -1617,25 +1567,20 @@ def build_challenges_response() -> ChallengesResponse:
 
     chats_payload = load_chats()
     if not chats_payload:
-        cached_chats = _load_chats_json()
-        if cached_chats:
-            chats_payload = cached_chats
-            persist_chats(cached_chats, mode="upsert")
+        remote_chats = _fetch_remote_chats()
+        if remote_chats:
+            chats_payload = remote_chats
+            persist_chats(remote_chats, mode="upsert")
         else:
-            remote_chats = _fetch_remote_chats()
-            if remote_chats:
-                chats_payload = remote_chats
-                persist_chats(remote_chats, mode="upsert")
-            else:
-                latest_export = find_latest_export()
-                if not latest_export:
-                    raise HTTPException(
-                        status_code=503,
-                        detail="No data available. Please configure Open WebUI credentials or provide a chat export.",
-                    )
-                with open(latest_export, "r", encoding="utf-8") as f:
-                    chats_payload = json.load(f)
-                persist_chats(chats_payload, mode="upsert")
+            latest_export = find_latest_export()
+            if not latest_export:
+                raise HTTPException(
+                    status_code=503,
+                    detail="No data available. Please configure Open WebUI credentials or provide a chat export.",
+                )
+            with open(latest_export, "r", encoding="utf-8") as f:
+                chats_payload = json.load(f)
+            persist_chats(chats_payload, mode="upsert")
 
     filtered_chats = _filter_chats_by_mission_models(chats_payload, mission_model_aliases)
 
@@ -1645,14 +1590,6 @@ def build_challenges_response() -> ChallengesResponse:
         if remote_users_payload:
             user_info_map, raw_users = remote_users_payload
             persist_users(raw_users, mode="upsert")
-        else:
-            user_info_map = _read_cached_users() or {}
-            if user_info_map:
-                cache_records = [
-                    {"user_id": uid, "name": info.get("name"), "email": info.get("email", "")}
-                    for uid, info in user_info_map.items()
-                ]
-                persist_users(cache_records, mode="upsert")
 
     user_names_only = {uid: info.get("name", "") for uid, info in user_info_map.items()}
 
