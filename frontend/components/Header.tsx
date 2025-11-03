@@ -38,7 +38,7 @@ export default function Header({ onExportCSV, onExportExcel, isLoading = false }
     () => [
       {
         href: '/',
-        label: 'Dashboard',
+        label: 'Challenge Dashboard',
         isActive: pathname === '/',
       },
     ],

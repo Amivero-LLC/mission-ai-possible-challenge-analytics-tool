@@ -148,7 +148,8 @@ body {
   display: none;
   position: absolute;
   left: 0;
-  top: calc(100% + 0.25rem);
+  top: 100%;
+  padding-top: 0.25rem;
   min-width: 180px;
   z-index: 1000;
 }
