@@ -128,7 +128,6 @@ class MissionAnalyzer:
             "congratulations",
             "you did it",
             "success",
-            "correct",
             "well done",
             "you found it",
             "unlocked",
