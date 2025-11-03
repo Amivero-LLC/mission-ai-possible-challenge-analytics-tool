@@ -139,7 +139,6 @@ class MissionAnalyzer:
             "great job",
             "excellent work",
             "you succeeded",
-            "you win",
             "you got it",
             "MISSION_CODE:314-GHOST",
             "Mission complete",

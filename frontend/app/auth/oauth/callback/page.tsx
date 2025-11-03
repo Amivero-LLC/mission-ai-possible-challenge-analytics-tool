@@ -23,9 +23,9 @@ export default function OAuthCallbackPage() {
       return;
     }
 
-    async function finalize() {
+    async function finalize(authCode: string, authState: string) {
       try {
-        await completeOAuth({ code, state, redirect_uri: `${window.location.origin}/auth/oauth/callback` });
+        await completeOAuth({ code: authCode, state: authState, redirect_uri: `${window.location.origin}/auth/oauth/callback` });
         const target =
           (typeof window !== "undefined" ? sessionStorage.getItem("maip_post_auth_redirect") : null) || "/";
         if (typeof window !== "undefined") {
@@ -40,7 +40,7 @@ export default function OAuthCallbackPage() {
       }
     }
 
-    finalize();
+    finalize(code, state);
   }, [router, params]);
 
   return (

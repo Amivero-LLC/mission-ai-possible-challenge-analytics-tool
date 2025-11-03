@@ -17,7 +17,7 @@ UVICORN := $(VENV_BIN)/uvicorn
 
 NPM := npm --prefix $(FRONTEND_DIR)
 
-.PHONY: help up down logs backend-up frontend-up backend-install frontend-install install backend-dev frontend-dev backend-test frontend-lint frontend-build test clean backend frontend
+.PHONY: help up down logs backend-up frontend-up backend-install frontend-install frontend-bootstrap install backend-dev frontend-dev backend-test frontend-lint frontend-build test clean backend frontend
 
 help:
 	@echo "Mission Challenge Analytics – available commands"
@@ -35,7 +35,7 @@ help:
 	@echo "  make frontend-up       # docker compose up frontend --build"
 	@echo "  make clean             # Remove local venv and node_modules"
 
-up:
+up: frontend-bootstrap
 	docker compose up --build
 
 down:
@@ -47,7 +47,7 @@ logs:
 backend-up:
 	docker compose up backend --build
 
-frontend-up:
+frontend-up: frontend-bootstrap
 	docker compose up frontend --build
 
 backend: backend-up
@@ -63,6 +63,9 @@ backend-install: $(VENV_BIN)
 
 frontend-install:
 	$(NPM) install
+
+frontend-bootstrap:
+	docker compose run --rm frontend npm install
 
 install: backend-install frontend-install
 

@@ -46,6 +46,11 @@ export default function ResetPasswordPage() {
       return;
     }
 
+    if (!token) {
+      setError("Reset token is missing. Please request a new link.");
+      return;
+    }
+
     try {
       setIsSubmitting(true);
       setError(null);

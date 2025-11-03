@@ -126,7 +126,7 @@ export default function AdminConfigPage() {
         return { message: "Data synchronized. No new records found.", variant: "default" };
       }
 
-      const targetResource = scope && scope !== "all" ? scope : (runs[0]?.resource as ReloadResource | undefined);
+      const targetResource = scope ?? (runs[0]?.resource as ReloadResource | undefined);
       if (targetResource) {
         const label = `${targetResource.charAt(0).toUpperCase()}${targetResource.slice(1)}`;
         const newCount =

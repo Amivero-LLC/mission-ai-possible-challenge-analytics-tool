@@ -21,7 +21,7 @@ function isPublicPath(pathname: string): boolean {
   if (PUBLIC_PATHS.has(pathname)) {
     return true;
   }
-  for (const base of PUBLIC_PATHS) {
+  for (const base of Array.from(PUBLIC_PATHS)) {
     if (pathname.startsWith(`${base}/`)) {
       return true;
     }

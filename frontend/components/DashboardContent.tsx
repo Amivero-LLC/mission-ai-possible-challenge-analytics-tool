@@ -410,7 +410,7 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
         return { message: "Data synchronized. No new records found.", variant: "default" };
       }
 
-      const targetResource = scope && scope !== "all" ? scope : (runs[0]?.resource as ReloadResource | undefined);
+      const targetResource = scope ?? (runs[0]?.resource as ReloadResource | undefined);
       if (targetResource) {
         const label = `${targetResource.charAt(0).toUpperCase()}${targetResource.slice(1)}`;
         const newCount = targetResource in newCounts ? newCounts[targetResource] : runs[0]?.new_records ?? runs[0]?.rows ?? 0;

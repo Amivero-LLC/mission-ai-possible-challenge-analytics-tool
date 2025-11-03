@@ -1,4 +1,4 @@
-type ToastType = "success" | "error" | "warn" | "default";
+export type ToastType = "success" | "error" | "warn" | "default";
 
 export interface ToastOptions {
   id?: string;
@@ -15,7 +15,7 @@ export interface ToastPayload extends ToastOptions {
   persist: boolean;
 }
 
-type ToastStoreEvent =
+export type ToastStoreEvent =
   | { type: "ADD"; toast: ToastPayload }
   | { type: "DISMISS"; id?: string }
   | { type: "CLEAR" };
@@ -43,7 +43,9 @@ function emit(event: ToastStoreEvent) {
 export const toastStore = {
   subscribe(listener: ToastListener) {
     listeners.add(listener);
-    return () => listeners.delete(listener);
+    return () => {
+      listeners.delete(listener);
+    };
   },
   add(toast: ToastPayload) {
     emit({ type: "ADD", toast });
@@ -100,5 +102,3 @@ toast.warn = createShortcut("warn");
 toast.info = createShortcut("default");
 toast.dismiss = (id?: string) => toastStore.dismiss(id);
 toast.clear = () => toastStore.clear();
-
-export type { ToastType, ToastPayload, ToastStoreEvent };
