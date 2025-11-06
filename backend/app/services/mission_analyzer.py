@@ -139,9 +139,11 @@ class MissionAnalyzer:
             "excellent work",
             "you succeeded",
             "you got it",
-            "MISSION_CODE:314-GHOST",
-            "Mission complete",
+            "mission_code:314-ghost",
+            "mission complete",
         ]
+        # Normalize keywords so substring checks remain case-insensitive.
+        self.success_keywords = [keyword.lower() for keyword in self.success_keywords]
 
         if user_names:
             self.user_names.update(user_names)
