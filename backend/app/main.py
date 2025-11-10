@@ -14,6 +14,8 @@ from .auth.dependencies import get_current_user, require_admin
 from .auth.models import AuthUser
 from .auth.routes import admin_router as auth_admin_router
 from .auth.routes import auth_router, setup_router
+from .campaign import campaign_router
+from .campaign.service import DEFAULT_RANK_ROWS
 from .db import Base, engine, get_engine_info
 from .schemas import (
     ChallengesResponse,
@@ -106,6 +108,7 @@ app.add_middleware(
 app.include_router(setup_router)
 app.include_router(auth_router)
 app.include_router(auth_admin_router)
+app.include_router(campaign_router)
 
 
 def _ensure_reload_log_columns() -> None:
@@ -151,11 +154,52 @@ def _ensure_model_columns() -> None:
                 connection.execute(text(f"ALTER TABLE models ADD COLUMN IF NOT EXISTS {definition}"))
 
 
+def _ensure_campaign_columns() -> None:
+    info = get_engine_info()
+    column_definitions = {
+        "sharepoint_user_id": "INTEGER",
+        "total_points": "NUMERIC(10,2) DEFAULT 0 NOT NULL",
+        "current_rank": "INTEGER DEFAULT 0 NOT NULL",
+    }
+
+    with engine.begin() as connection:
+        if info.engine == "sqlite":
+            existing_columns = {
+                row[1] for row in connection.execute(text("PRAGMA table_info(users)")).fetchall()
+            }
+            for column, definition in column_definitions.items():
+                if column not in existing_columns:
+                    connection.execute(text(f"ALTER TABLE users ADD COLUMN {column} {definition}"))
+        else:
+            for column, definition in column_definitions.items():
+                connection.execute(text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {column} {definition}"))
+
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_users_sharepoint ON users(sharepoint_user_id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS idx_users_email_lc ON users(LOWER(email))"))
+
+
+def _seed_default_ranks() -> None:
+    with engine.begin() as connection:
+        for row in DEFAULT_RANK_ROWS:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO ranks (rank_number, rank_name, minimum_points, swag, total_raffle_tickets)
+                    VALUES (:rank_number, :rank_name, :minimum_points, :swag, :total_raffle_tickets)
+                    ON CONFLICT(rank_number) DO NOTHING
+                    """
+                ),
+                row,
+            )
+
+
 @app.on_event("startup")
 def startup_event() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_reload_log_columns()
     _ensure_model_columns()
+    _ensure_campaign_columns()
+    _seed_default_ranks()
 
     try:
         row_counts = get_row_counts()

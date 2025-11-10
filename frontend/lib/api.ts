@@ -1,4 +1,5 @@
 import type { DatabaseStatus, ReloadMode, ReloadResource, ReloadRun } from "../types/admin";
+import type { CampaignSummaryResponse, SubmissionReloadSummary } from "../types/campaign";
 import type { DashboardResponse, SortOption } from "../types/dashboard";
 
 /**
@@ -199,4 +200,80 @@ export async function reloadDatabase(
 
   const payload = (await response.json()) as ReloadRun;
   return [payload];
+}
+
+export interface CampaignSummaryQuery {
+  week?: string;
+  user?: string;
+}
+
+export async function fetchCampaignSummary(
+  query: CampaignSummaryQuery = {},
+  authCookies?: string,
+): Promise<CampaignSummaryResponse> {
+  const baseUrl = resolveBaseUrl();
+  const url = new URL("/api/campaign/summary", baseUrl);
+  const params = new URLSearchParams();
+
+  if (query.week && query.week !== "all") {
+    params.set("week", query.week);
+  } else if (query.week === "all") {
+    params.set("week", "all");
+  }
+
+  if (query.user) {
+    params.set("user", query.user);
+  }
+
+  if ([...params.keys()].length > 0) {
+    url.search = params.toString();
+  }
+
+  const headers: Record<string, string> = {};
+  if (authCookies) {
+    headers.Cookie = authCookies;
+  }
+
+  const response = await fetch(url.toString(), {
+    cache: "no-store",
+    credentials: "include",
+    headers,
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Request failed with ${response.status}`);
+  }
+
+  return response.json() as Promise<CampaignSummaryResponse>;
+}
+
+export async function uploadSubmissions(
+  file: File,
+  authCookies?: string,
+): Promise<SubmissionReloadSummary> {
+  const baseUrl = resolveBaseUrl();
+  const url = new URL("/api/admin/reload/submissions", baseUrl);
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const headers: Record<string, string> = {};
+  if (authCookies) {
+    headers.Cookie = authCookies;
+  }
+
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    cache: "no-store",
+    credentials: "include",
+    headers,
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Request failed with ${response.status}`);
+  }
+
+  return response.json() as Promise<SubmissionReloadSummary>;
 }

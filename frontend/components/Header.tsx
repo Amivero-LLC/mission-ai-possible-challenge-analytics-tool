@@ -41,6 +41,11 @@ export default function Header({ onExportCSV, onExportExcel, isLoading = false }
         label: 'Challenge Dashboard',
         isActive: pathname === '/',
       },
+      {
+        href: '/campaign',
+        label: 'Campaign Dashboard',
+        isActive: pathname === '/campaign',
+      },
     ],
     [pathname],
   );

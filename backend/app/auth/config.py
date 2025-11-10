@@ -13,7 +13,7 @@ from .models import AuthMode
 class AuthConfig(BaseSettings):
     auth_mode: AuthMode = AuthMode.DEFAULT
     session_secret: str = "change-me"
-    access_token_ttl_minutes: int = 15
+    access_token_ttl_minutes: int = 60
     refresh_token_ttl_days: int = 14
     session_cookie_secure: bool = False
     session_cookie_domain: Optional[str] = None

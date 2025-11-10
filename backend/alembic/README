@@ -1,0 +1,9 @@
+This directory stores schema migrations for the FastAPI backend.
+
+Use the provided `alembic.ini` (run commands from `backend/`) to create
+and apply revisions. Example:
+
+```
+cd backend
+alembic upgrade head
+```

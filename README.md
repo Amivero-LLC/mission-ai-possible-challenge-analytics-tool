@@ -84,6 +84,9 @@ The repository ships with an expanded Makefile to streamline common workflows:
 python -m venv .venv
 source .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install -r backend/requirements.txt
+cd backend
+alembic upgrade head                 # applies campaign dashboard tables/columns
+cd ..
 uvicorn backend.app.main:app --reload
 
 # Frontend (new terminal)
@@ -93,6 +96,17 @@ npm run dev
 ```
 
 Open http://localhost:3000 to access the dashboard. By default the frontend talks to http://localhost:8000.
+
+### Database migrations
+
+The backend now ships with an Alembic environment under `backend/alembic`. After installing Python dependencies, run the migrations from the `backend/` directory:
+
+```bash
+cd backend
+alembic upgrade head
+```
+
+This creates the `submitted_activity_list` and `ranks` tables plus the new user point/rank columns required by the campaign dashboard.
 
 ### Test the stack
 
@@ -144,6 +158,7 @@ The enhanced dashboard provides comprehensive mission analytics with:
 - ✅ **Status Filter** – Toggle between Completed, In Progress, Not Started, or the full dataset.
 - 👥 **User Filter** – View performance for a single teammate using friendly display names.
 - ♻️ **Quick Reset & Reload** – Reset filters or trigger a data reload from Open WebUI with one click.
+- 🧭 **Campaign Dashboard (/campaign)** – Dedicated leaderboard for `SubmittedActivityList.csv` uploads with per-week scoring, rank badges, and inline sorting.
 
 ### **Data Views**
 - **📊 Overview Tab** – Leaderboards, participation stats, and mission health cards.
@@ -151,6 +166,7 @@ The enhanced dashboard provides comprehensive mission analytics with:
 - **💬 All Chats Tab** – Chat transcripts with metadata and mission context.
 - **🎯 Missions Tab** – Completion trends and success rates per mission.
 - **🛠 Admin Workspace** – Configuration, user approvals, and audit trail pages with shared navigation.
+- **🚀 Campaign Dashboard** – Upload panel (admin-only) plus a sortable, filterable leaderboard that recomputes points and ranks using the structured CSV export.
 
 ### **Export Options**
 - 📥 **CSV Export** - Download current tab data as CSV file
