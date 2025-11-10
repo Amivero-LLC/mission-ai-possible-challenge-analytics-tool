@@ -77,13 +77,27 @@ def _normalize_to_utc(dt: Optional[datetime]) -> Optional[datetime]:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
 
+# Determine which browser origins may call the API. Default to the configured
+# frontend port while keeping localhost:3000 for backwards compatibility, and
+# allow overrides via CORS_ALLOW_ORIGINS (comma-delimited list).
+_frontend_port = os.getenv("FRONTEND_PORT", "3000")
+_allowed_origins = {
+    f"http://localhost:{_frontend_port}",
+    f"http://127.0.0.1:{_frontend_port}",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+}
+_extra_origins = os.getenv("CORS_ALLOW_ORIGINS")
+if _extra_origins:
+    _allowed_origins.update(origin.strip() for origin in _extra_origins.split(",") if origin.strip())
+
 # FastAPI instance serves data to the analytics frontend.
 app = FastAPI(title="Mission Dashboard API", version="1.0.0")
 
-# Configure CORS to allow frontend access
+# Configure CORS to allow frontend access.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=sorted(_allowed_origins),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

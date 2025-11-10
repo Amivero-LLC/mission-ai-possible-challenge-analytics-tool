@@ -16,6 +16,7 @@ PYTEST := $(VENV_BIN)/pytest
 UVICORN := $(VENV_BIN)/uvicorn
 
 NPM := npm --prefix $(FRONTEND_DIR)
+COMPOSE := docker compose --env-file .env
 
 .PHONY: help up down logs backend-up frontend-up backend-install frontend-install frontend-bootstrap install backend-dev frontend-dev backend-test frontend-lint frontend-build test clean backend frontend
 
@@ -36,19 +37,19 @@ help:
 	@echo "  make clean             # Remove local venv and node_modules"
 
 up: frontend-bootstrap
-	docker compose up --build
+	$(COMPOSE) up --build
 
 down:
-	docker compose down
+	$(COMPOSE) down
 
 logs:
-	docker compose logs -f
+	$(COMPOSE) logs -f
 
 backend-up:
-	docker compose up backend --build
+	$(COMPOSE) up backend --build
 
 frontend-up: frontend-bootstrap
-	docker compose up frontend --build
+	$(COMPOSE) up frontend --build
 
 backend: backend-up
 
@@ -65,7 +66,7 @@ frontend-install:
 	$(NPM) install
 
 frontend-bootstrap:
-	docker compose run --rm frontend npm install
+	$(COMPOSE) run --rm frontend npm install
 
 install: backend-install frontend-install
 
