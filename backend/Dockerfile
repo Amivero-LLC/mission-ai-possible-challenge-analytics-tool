@@ -10,8 +10,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     BACKEND_PORT=8000
 
 # Install dependencies separately to leverage Docker layer caching.
-COPY backend/requirements.txt /tmp/requirements.txt
+COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# Copy the backend source into /app/backend so Python imports stay stable regardless of context.
+COPY . /app/backend
 
 # Start uvicorn in autoreload mode for local development.
 CMD ["sh", "-c", "uvicorn backend.app.main:app --host 0.0.0.0 --port ${BACKEND_PORT:-8000} --reload"]

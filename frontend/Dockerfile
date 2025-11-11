@@ -8,8 +8,11 @@ ENV NODE_ENV=development \
     PORT=3000
 
 # Preinstall dependencies so `npm run dev` starts instantly in compose.
-COPY frontend/package*.json ./
+COPY package*.json ./
 RUN npm install
+
+# Copy the rest of the app for production builds (ignored locally when bind-mounted).
+COPY . .
 
 # Run Next.js with explicit host/port so Docker networking works out of the box.
 CMD ["sh", "-c", "npm install && npm run dev -- --hostname 0.0.0.0 --port ${PORT:-3000}"]

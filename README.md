@@ -128,20 +128,6 @@ Navigate to `/campaign` to review leaderboard standings that blend mission-deriv
 - **Exports & summaries** - Totals per week, per user, plus a quick view of the last upload timestamp.
 - **CLI validation** - `python scripts/missing_credit_report.py` compares API completions with the CSV and writes `exports/combined_report.xlsx` + `exports/missing_credit_report.xlsx`. Set `API_BASE_URL` if the backend is not on `localhost:8000`.
 
-## Railway / Railpack Deployment
-
-`./start.sh` is Railpack-aware and can launch either service based on `SERVICE_ROLE`. Recommended setup for two Railway services:
-
-| Service | Build commands | Required env vars | Notes |
-| --- | --- | --- | --- |
-| Backend API | `pip install -r backend/requirements.txt` (ensure Alembic + deps baked in) | `SERVICE_ROLE=backend`<br>`PYTHON_BIN=/app/.venv/bin/python` (or path to your interpreter)<br>`BACKEND_PORT=${PORT}` (Railway injects `PORT` automatically)<br>Database credentials (`DB_ENGINE`, `DB_HOST`, etc.) | `start.sh` will run Alembic migrations unless `SKIP_DB_MIGRATIONS=1`. If you prefer migrations during build, export that flag at runtime. |
-| Frontend UI | `cd frontend && npm install && npm run build` | `SERVICE_ROLE=frontend`<br>`NEXT_PUBLIC_API_BASE_URL=https://<backend-service>.up.railway.app`<br>`API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}`<br>`FRONTEND_PORT=${PORT}` | Startup falls back to `npm run build` only when `.next/` is missing, so prebuilding keeps deploys snappy. |
-
-Additional tips:
-- Naming the services `backend` / `frontend` lets the script infer the role even without `SERVICE_ROLE`, but setting it explicitly avoids warnings.
-- Single-service installs can set `DEFAULT_SERVICE_ROLE=backend` to silence the fallback message when the Railway service name doesn’t include “backend”.
-- Point `PYTHON_BIN` at the exact interpreter produced during the build (for example `/app/.venv/bin/python`) so Uvicorn launches with the same environment that holds dependencies. If the interpreter path changes between environments, set `PYTHON_BIN_HINTS` to a colon-delimited list (e.g., `/app/.venv/bin/python:/opt/venv/bin/python`) and `start.sh` will auto-pick the first executable found.
-- When using Railway Postgres, either populate the `DB_*` variables or export `SQLALCHEMY_DATABASE_URI` using Railway’s managed connection string.
 
 ## CLI & Automation Helpers
 
@@ -164,6 +150,16 @@ cd frontend && npm run test
 make test
 ```
 Vitest is preconfigured with JSDOM (`frontend/vitest.config.ts`) and Testing Library helpers; backend tests live under `backend/tests/`.
+
+## Deploying on Railway
+
+**Backend service**
+- Set the service root to `backend/` and keep `backend/Dockerfile` selected so file paths stay relative to that directory.
+- Provide the same environment variables you use locally (`BACKEND_PORT`, `DB_ENGINE`, `OPEN_WEBUI_*`, etc.). SQLite databases are stored inside `/app/data`; switch to Postgres via `DB_ENGINE=postgres` plus the `DB_*` variables.
+
+**Frontend service**
+- Point the service at `frontend/` and build with `frontend/Dockerfile`.
+- Set `NEXT_PUBLIC_API_BASE_URL` (and any other Next.js secrets) so the UI can call the backend’s Railway URL. Expose port `3000` or your custom `FRONTEND_PORT`.
 
 ## Troubleshooting & Further Reading
 - `docs/ADMIN_DEPLOYMENT_GUIDE.md`, `docs/API_SETUP_GUIDE.md`, and `docs/WHATS_NEW.txt` contain deeper operational notes, OAuth walkthroughs, and release highlights.

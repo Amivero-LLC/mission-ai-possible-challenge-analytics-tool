@@ -2,8 +2,8 @@ services:
   backend:
     # FastAPI API service exposes mission analytics to the frontend.
     build:
-      context: .
-      dockerfile: backend/Dockerfile
+      context: ./backend
+      dockerfile: Dockerfile
     ports:
       - "${BACKEND_PORT:-8000}:${BACKEND_PORT:-8000}"
     volumes:
@@ -21,8 +21,8 @@ services:
   frontend:
     # Next.js dashboard rendered by developers in watch mode.
     build:
-      context: .
-      dockerfile: frontend/Dockerfile
+      context: ./frontend
+      dockerfile: Dockerfile
     ports:
       - "${FRONTEND_PORT:-3000}:${FRONTEND_PORT:-3000}"
     volumes:
