@@ -9,56 +9,95 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${SCRIPT_DIR}"
 
-choose_role() {
-  if [[ -n "${1:-}" ]]; then
-    echo "${1}"
-  elif [[ -n "${SERVICE_ROLE:-}" ]]; then
-    echo "${SERVICE_ROLE}"
-  elif [[ -n "${APP_ROLE:-}" ]]; then
-    echo "${APP_ROLE}"
-  elif [[ -n "${RAILWAY_SERVICE_NAME:-}" ]]; then
-    echo "${RAILWAY_SERVICE_NAME}"
-  else
-    echo "backend"
+is_railway_env() {
+  if [[ -n "${RAILWAY_PROJECT_ID:-}" || -n "${RAILWAY_ENVIRONMENT_ID:-}" || -n "${RAILWAY_ENVIRONMENT:-}" || -n "${RAILWAY_SERVICE_NAME:-}" || -n "${RAILWAY_SERVICE_SLUG:-}" || -n "${RAILPACK_SERVICE_TYPE:-}" ]]; then
+    return 0
   fi
+  return 1
 }
 
-ROLE_RAW="$(choose_role "${1:-}")"
-ROLE_LOWER="$(echo "${ROLE_RAW}" | tr '[:upper:]' '[:lower:]')"
-
-# Allow Railpack/Railway service names that don't literally include backend/frontend.
-normalize_role() {
-  local value="${1}"
-  if [[ "${value}" == *frontend* ]]; then
-    echo "frontend"
-    return
+normalize_role_label() {
+  local raw="${1:-}"
+  if [[ -z "${raw}" ]]; then
+    return 1
   fi
-  if [[ "${value}" == *backend* ]]; then
-    echo "backend"
-    return
-  fi
-  if [[ -n "${RAILPACK_SERVICE_TYPE:-}" ]]; then
-    local pack_type
-    pack_type="$(echo "${RAILPACK_SERVICE_TYPE}" | tr '[:upper:]' '[:lower:]')"
-    if [[ "${pack_type}" == *frontend* ]]; then
-      echo "frontend"
-      return
-    fi
-    if [[ "${pack_type}" == *backend* ]]; then
+  local lower
+  lower="$(echo "${raw}" | tr '[:upper:]' '[:lower:]')"
+  lower="${lower// /}"
+  case "${lower}" in
+    backend|api|server|fastapi|python)
       echo "backend"
-      return
-    fi
+      return 0
+      ;;
+    frontend|front-end|next|nextjs|web|ui|client)
+      echo "frontend"
+      return 0
+      ;;
+  esac
+  if [[ "${lower}" == *"backend"* || "${lower}" == *"api"* ]]; then
+    echo "backend"
+    return 0
   fi
-  if [[ -n "${DEFAULT_SERVICE_ROLE:-}" ]]; then
-    echo "${DEFAULT_SERVICE_ROLE}"
-    return
+  if [[ "${lower}" == *"frontend"* || "${lower}" == *"next"* || "${lower}" == *"web"* || "${lower}" == *"client"* ]]; then
+    echo "frontend"
+    return 0
   fi
-  echo "backend"
+  return 1
 }
 
-ROLE="$(normalize_role "${ROLE_LOWER}")"
-if [[ "${ROLE}" == "backend" && "${ROLE_LOWER}" != *backend* && "${ROLE_LOWER}" != *frontend* ]]; then
-  echo "Detected unrecognized role \"${ROLE_RAW}\" – defaulting to backend. Set SERVICE_ROLE to backend or frontend to override." >&2
+resolve_role() {
+  local candidate
+  if candidate="$(normalize_role_label "${1:-}")"; then
+    echo "${candidate}"
+    return 0
+  fi
+  if candidate="$(normalize_role_label "${SERVICE_ROLE:-}")"; then
+    echo "${candidate}"
+    return 0
+  fi
+  if candidate="$(normalize_role_label "${APP_ROLE:-}")"; then
+    echo "${candidate}"
+    return 0
+  fi
+  if candidate="$(normalize_role_label "${RAILPACK_SERVICE_TYPE:-}")"; then
+    echo "${candidate}"
+    return 0
+  fi
+  if candidate="$(normalize_role_label "${RAILWAY_SERVICE_NAME:-}")"; then
+    echo "${candidate}"
+    return 0
+  fi
+  if candidate="$(normalize_role_label "${RAILWAY_SERVICE_SLUG:-}")"; then
+    echo "${candidate}"
+    return 0
+  fi
+  if candidate="$(normalize_role_label "${DEFAULT_SERVICE_ROLE:-}")"; then
+    echo "${candidate}"
+    return 0
+  fi
+  echo ""
+}
+
+print_role_help() {
+  cat >&2 <<'EOF'
+Unable to determine which service to start.
+Provide a role using one of these options:
+  - ./start.sh backend           # CLI override
+  - SERVICE_ROLE=backend ./start.sh
+  - DEFAULT_SERVICE_ROLE=frontend (if you only run one service)
+
+Railway / Railpack best practice is to set SERVICE_ROLE to "backend" or "frontend"
+on each service definition so deployments stay deterministic.
+EOF
+  if is_railway_env; then
+    echo >&2 "Tip: add SERVICE_ROLE to your Railpack service env vars (see README.md - Railway / Railpack Deployment)."
+  fi
+}
+
+ROLE="$(resolve_role "${1:-}")"
+if [[ -z "${ROLE}" ]]; then
+  print_role_help "${1:-}"
+  exit 1
 fi
 
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
@@ -66,6 +105,14 @@ export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 detect_python_bin() {
   if [[ -n "${PYTHON_BIN:-}" ]]; then
     echo "${PYTHON_BIN}"
+    return
+  fi
+  if [[ -x "${REPO_ROOT}/.venv/bin/python" ]]; then
+    echo "${REPO_ROOT}/.venv/bin/python"
+    return
+  fi
+  if [[ -x "${REPO_ROOT}/venv/bin/python" ]]; then
+    echo "${REPO_ROOT}/venv/bin/python"
     return
   fi
   if command -v python3 >/dev/null 2>&1; then
@@ -84,6 +131,10 @@ start_backend() {
   python_bin="$(detect_python_bin)"
   if [[ -z "${python_bin}" ]]; then
     echo "Error: python interpreter not found. Set PYTHON_BIN to the appropriate executable." >&2
+    exit 1
+  fi
+  if ! "${python_bin}" -c "import uvicorn" >/dev/null 2>&1; then
+    echo "uvicorn is not installed in ${python_bin}. Install backend dependencies during the Railpack build phase." >&2
     exit 1
   fi
   local host="${BACKEND_HOST:-0.0.0.0}"
@@ -128,17 +179,38 @@ start_frontend() {
 
   cd "${REPO_ROOT}/frontend"
 
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "npm is not available in PATH. Install Node.js during the Railpack build phase." >&2
+    exit 1
+  fi
+
+  export NODE_ENV="${NODE_ENV:-production}"
+  export NEXT_TELEMETRY_DISABLED="${NEXT_TELEMETRY_DISABLED:-1}"
+
+  local allow_install="${ALLOW_RUNTIME_NPM_INSTALL:-}"
+  if [[ -z "${allow_install}" ]]; then
+    if is_railway_env; then
+      allow_install=0
+    else
+      allow_install=1
+    fi
+  fi
+
   if [[ ! -d node_modules ]]; then
+    if [[ "${allow_install}" != "1" ]]; then
+      echo "node_modules/ is missing. Install dependencies during the Railpack build phase or set ALLOW_RUNTIME_NPM_INSTALL=1 if you intentionally want runtime installs." >&2
+      exit 1
+    fi
     echo "Installing frontend dependencies"
     if [[ -f package-lock.json ]]; then
-      npm ci
+      npm ci --omit=dev
     else
-      npm install
+      npm install --omit=dev
     fi
   fi
 
   local needs_build=0
-  if [[ ! -d .next ]]; then
+  if [[ ! -d .next || ! -f .next/BUILD_ID ]]; then
     needs_build=1
   fi
   if [[ "${FORCE_FRONTEND_BUILD:-0}" == "1" ]]; then
@@ -146,6 +218,18 @@ start_frontend() {
   fi
 
   if [[ "${SKIP_FRONTEND_BUILD:-0}" != "1" && "${needs_build}" -eq 1 ]]; then
+    local allow_build="${ALLOW_RUNTIME_NEXT_BUILD:-}"
+    if [[ -z "${allow_build}" ]]; then
+      if is_railway_env; then
+        allow_build=0
+      else
+        allow_build=1
+      fi
+    fi
+    if [[ "${allow_build}" != "1" ]]; then
+      echo ".next/ build artifacts missing. Build the frontend during the Railpack build phase or set ALLOW_RUNTIME_NEXT_BUILD=1 to compile at startup." >&2
+      exit 1
+    fi
     echo "Building Next.js app"
     npm run build
   fi
@@ -153,11 +237,11 @@ start_frontend() {
   exec npm run start -- --hostname "${host}" --port "${port}"
 }
 
-if [[ "${ROLE}" == *frontend* ]]; then
+if [[ "${ROLE}" == "frontend" ]]; then
   start_frontend
-elif [[ "${ROLE}" == *backend* ]]; then
+elif [[ "${ROLE}" == "backend" ]]; then
   start_backend
 else
-  echo "Unsupported role \"${ROLE_RAW}\". Set SERVICE_ROLE to backend or frontend." >&2
+  echo "Unsupported role \"${ROLE}\". Set SERVICE_ROLE to backend or frontend." >&2
   exit 1
 fi
