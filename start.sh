@@ -78,26 +78,17 @@ resolve_role() {
   echo ""
 }
 
-print_role_help() {
-  cat >&2 <<'EOF'
-Unable to determine which service to start.
-Provide a role using one of these options:
-  - ./start.sh backend           # CLI override
-  - SERVICE_ROLE=backend ./start.sh
-  - DEFAULT_SERVICE_ROLE=frontend (if you only run one service)
-
-Railway / Railpack best practice is to set SERVICE_ROLE to "backend" or "frontend"
-on each service definition so deployments stay deterministic.
-EOF
-  if is_railway_env; then
-    echo >&2 "Tip: add SERVICE_ROLE to your Railpack service env vars (see README.md - Railway / Railpack Deployment)."
-  fi
-}
-
 ROLE="$(resolve_role "${1:-}")"
 if [[ -z "${ROLE}" ]]; then
-  print_role_help "${1:-}"
-  exit 1
+  fallback_raw="${DEFAULT_SERVICE_ROLE:-backend}"
+  if ! fallback_normalized="$(normalize_role_label "${fallback_raw}")"; then
+    fallback_normalized="backend"
+  fi
+  ROLE="${fallback_normalized}"
+  echo "Warning: SERVICE_ROLE not set. Defaulting to \"${ROLE}\". Set SERVICE_ROLE to backend or frontend for deterministic deployments." >&2
+  if is_railway_env; then
+    echo >&2 "Tip: add SERVICE_ROLE to your Railpack service env vars (see README.md - Railway / Railpack Deployment)." 
+  fi
 fi
 
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
