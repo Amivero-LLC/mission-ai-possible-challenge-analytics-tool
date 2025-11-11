@@ -37,15 +37,15 @@ export default function Header({ onExportCSV, onExportExcel, isLoading = false }
   const primaryNavItems = useMemo(
     () => [
       {
-        href: '/',
-        label: 'Challenge Dashboard',
-        isActive: pathname === '/',
-      },
-      {
         href: '/campaign',
         label: 'Campaign Dashboard',
         isActive: pathname === '/campaign',
       },
+      {
+        href: '/',
+        label: 'Challenge Dashboard',
+        isActive: pathname === '/',
+      },      
     ],
     [pathname],
   );
@@ -152,7 +152,7 @@ export default function Header({ onExportCSV, onExportExcel, isLoading = false }
           </div>
           <div className="brand-text">
             <h1 className="brand-title">Mission:AI Possible</h1>
-            <p className="brand-subtitle">Challenge Tracker</p>
+            <p className="brand-subtitle">Campaign Tracker</p>
           </div>
         </div>
 
