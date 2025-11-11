@@ -24,7 +24,42 @@ choose_role() {
 }
 
 ROLE_RAW="$(choose_role "${1:-}")"
-ROLE="$(echo "${ROLE_RAW}" | tr '[:upper:]' '[:lower:]')"
+ROLE_LOWER="$(echo "${ROLE_RAW}" | tr '[:upper:]' '[:lower:]')"
+
+# Allow Railpack/Railway service names that don't literally include backend/frontend.
+normalize_role() {
+  local value="${1}"
+  if [[ "${value}" == *frontend* ]]; then
+    echo "frontend"
+    return
+  fi
+  if [[ "${value}" == *backend* ]]; then
+    echo "backend"
+    return
+  fi
+  if [[ -n "${RAILPACK_SERVICE_TYPE:-}" ]]; then
+    local pack_type
+    pack_type="$(echo "${RAILPACK_SERVICE_TYPE}" | tr '[:upper:]' '[:lower:]')"
+    if [[ "${pack_type}" == *frontend* ]]; then
+      echo "frontend"
+      return
+    fi
+    if [[ "${pack_type}" == *backend* ]]; then
+      echo "backend"
+      return
+    fi
+  fi
+  if [[ -n "${DEFAULT_SERVICE_ROLE:-}" ]]; then
+    echo "${DEFAULT_SERVICE_ROLE}"
+    return
+  fi
+  echo "backend"
+}
+
+ROLE="$(normalize_role "${ROLE_LOWER}")"
+if [[ "${ROLE}" == "backend" && "${ROLE_LOWER}" != *backend* && "${ROLE_LOWER}" != *frontend* ]]; then
+  echo "Detected unrecognized role \"${ROLE_RAW}\" – defaulting to backend. Set SERVICE_ROLE to backend or frontend to override." >&2
+fi
 
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 
