@@ -15,4 +15,4 @@ RUN npm install
 COPY . .
 
 # Run Next.js with explicit host/port so Docker networking works out of the box.
-CMD ["sh", "-c", "npm install && npm run dev -- --hostname 0.0.0.0 --port ${PORT:-3000}"]
+CMD ["sh", "-c", "npm run dev -- --hostname 0.0.0.0 --port ${PORT:-3000}"]

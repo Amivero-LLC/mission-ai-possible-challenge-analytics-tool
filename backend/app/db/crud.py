@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -163,9 +163,52 @@ def upsert_models(session: Session, records: Iterable[dict]) -> int:
     return affected
 
 
+def _build_placeholder_user(record: dict, user_id: str) -> Dict[str, object]:
+    """
+    Construct a minimal user payload using any hints from the chat record so
+    chats referencing unknown users can be persisted without violating the FK.
+    """
+    user_sources = [
+        record.get("user"),
+        record.get("owner"),
+        record.get("profile"),
+        record.get("meta", {}).get("user") if isinstance(record.get("meta"), dict) else None,
+        record.get("chat", {}).get("user") if isinstance(record.get("chat"), dict) else None,
+    ]
+    user_data: Dict[str, object] = {}
+    for candidate in user_sources:
+        if isinstance(candidate, dict):
+            user_data = dict(candidate)
+            break
+
+    user_data.setdefault("id", user_id)
+    user_data.setdefault("_source", "chat_placeholder")
+
+    def _normalize(value: object) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        text = value.strip()
+        return text or None
+
+    name = _normalize(
+        user_data.get("name")
+        or user_data.get("display_name")
+        or user_data.get("username")
+        or user_data.get("email")
+    )
+    email = _normalize(user_data.get("email"))
+
+    return {
+        "name": name,
+        "email": email,
+        "data": user_data or {"id": user_id},
+    }
+
+
 def upsert_chats(session: Session, records: Iterable[dict]) -> int:
     """Insert chat transcripts while preserving mission-specific metadata."""
     affected = 0
+    ensured_users: set[str] = set()
     for record in records:
         chat_id = record.get("id")
         if not chat_id:
@@ -173,6 +216,12 @@ def upsert_chats(session: Session, records: Iterable[dict]) -> int:
 
         chat_data = record.get("chat") or {}
         user_id = record.get("user_id") or chat_data.get("user_id")
+        if user_id:
+            if user_id not in ensured_users:
+                if not session.get(User, user_id):
+                    placeholder = _build_placeholder_user(record, user_id)
+                    session.add(User(id=user_id, **placeholder))
+                ensured_users.add(user_id)
         title = record.get("title") or chat_data.get("title")
         models = chat_data.get("models", [])
         primary_model = None
