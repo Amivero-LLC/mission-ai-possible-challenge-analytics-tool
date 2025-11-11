@@ -45,13 +45,14 @@ SESSION_COOKIE_SAME_SITE=strict
 
 #### Custom Start Command
 ```bash
-bash ../start.sh
+bash start.sh
 ```
+
+Note: This runs `backend/start.sh` which handles Alembic migrations and starts Uvicorn.
 
 #### Watch Paths (Optional - prevents unnecessary rebuilds)
 ```
 backend/**
-start.sh
 ```
 
 ### Frontend Service Configuration
@@ -85,13 +86,14 @@ NEXT_PUBLIC_AUTH_MODE=DEFAULT
 
 #### Custom Start Command
 ```bash
-bash ../start.sh
+bash start.sh
 ```
+
+Note: This runs `frontend/start.sh` which starts the Next.js production server.
 
 #### Watch Paths (Optional - prevents unnecessary rebuilds)
 ```
 frontend/**
-start.sh
 ```
 
 ## How It Works
@@ -117,13 +119,19 @@ By setting the Root Directory to `backend` or `frontend`, Railway:
 - Runs `npm run build` (production build)
 - Executes the start command
 
-### Start Script
+### Start Scripts
 
-The `../start.sh` script:
-1. Checks the `SERVICE_ROLE` environment variable
-2. Routes to either `start_backend()` or `start_frontend()`
-3. Runs Alembic migrations (backend only)
-4. Starts Uvicorn (backend) or Next.js production server (frontend)
+Each service has its own dedicated start script:
+
+**Backend** (`backend/start.sh`):
+1. Runs Alembic database migrations (unless `SKIP_DB_MIGRATIONS=1`)
+2. Starts Uvicorn with FastAPI app on port `$PORT`
+
+**Frontend** (`frontend/start.sh`):
+1. Validates that Next.js build artifacts (`.next/`) exist
+2. Starts Next.js production server on port `$PORT`
+
+These service-specific scripts replace the need for the root `start.sh` with `SERVICE_ROLE` logic.
 
 ## Watch Paths
 
