@@ -15,6 +15,18 @@ export interface StatusIndicator {
   examples?: string[];
 }
 
+export interface ActivityWeekSummary {
+  participants: number;
+  points: number;
+}
+
+export interface ActivityOverviewEntry {
+  activityType: string;
+  totalParticipants: number;
+  totalPoints: number;
+  weeks: Record<number, ActivityWeekSummary>;
+}
+
 export interface CampaignRow {
   user: CampaignUserInfo;
   pointsByWeek: Record<number, number>;
@@ -27,6 +39,7 @@ export interface CampaignSummaryResponse {
   weeks_present: number[];
   rows: CampaignRow[];
   last_upload_at?: string | null;
+  activity_overview: ActivityOverviewEntry[];
 }
 
 export interface SubmissionReloadSummary {

@@ -199,6 +199,49 @@ def test_rank_thresholds(session):
     assert ranks["rank2@example.com"] == 2
 
 
+def test_activity_overview_groups_by_week_and_activity(session):
+    rows = [
+        _base_row(UserID="51", Email="alpha@example.com", ActivityType="Training", WeekID="1", PointsAwarded="10"),
+        _base_row(UserID="52", Email="beta@example.com", ActivityType="Training", WeekID="1", PointsAwarded="15"),
+        _base_row(UserID="52", Email="beta@example.com", ActivityType="Training", WeekID="2", PointsAwarded="20"),
+        _base_row(UserID="53", Email="charlie@example.com", ActivityType="Demo Day", WeekID="1", PointsAwarded="5"),
+        _base_row(
+            UserID="53",
+            Email="charlie@example.com",
+            ActivityType="Demo Day",
+            WeekID="1",
+            PointsAwarded="5",
+            ActivityID="999",
+        ),
+    ]
+    reload_submissions(_build_csv(rows), session)
+    session.commit()
+
+    summary = get_campaign_summary(session, week=None, user_filter=None)
+    assert summary.activity_overview
+
+    training = next(item for item in summary.activity_overview if item.activityType == "Training")
+    assert training.totalParticipants == 2
+    assert training.totalPoints == 45
+    assert training.weeks[1].participants == 2
+    assert training.weeks[1].points == 25
+    assert training.weeks[2].participants == 1
+    assert training.weeks[2].points == 20
+
+    demo_day = next(item for item in summary.activity_overview if item.activityType == "Demo Day")
+    assert demo_day.totalParticipants == 1
+    assert demo_day.totalPoints == 10
+    assert demo_day.weeks[1].participants == 1
+    assert demo_day.weeks[1].points == 10
+
+    week_two_summary = get_campaign_summary(session, week="2", user_filter=None)
+    assert week_two_summary.activity_overview
+    assert len(week_two_summary.activity_overview) == 1
+    only_activity = week_two_summary.activity_overview[0]
+    assert only_activity.activityType == "Training"
+    assert list(only_activity.weeks.keys()) == [2]
+
+
 def test_mission_mapping_links_models(session):
     session.add(
         Model(

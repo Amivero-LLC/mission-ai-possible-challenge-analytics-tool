@@ -17,6 +17,7 @@ interface CampaignDashboardProps {
 type BaseSortColumn = 'user' | 'totalPoints' | 'currentRank';
 type SortColumn = BaseSortColumn | `week-${number}`;
 type SortDirection = 'asc' | 'desc';
+type CampaignTab = 'leaderboard' | 'activity';
 
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB guardrail
 
@@ -33,6 +34,11 @@ const STATUS_ICONS: Record<StatusSeverity, string> = {
   warning: '⚠️',
   error: '⛔',
 };
+
+const dashboardTabs: Array<{ id: CampaignTab; label: string }> = [
+  { id: 'leaderboard', label: '🏅 Leaderboard' },
+  { id: 'activity', label: '📈 Activity Overview' },
+];
 
 function renderStatusIndicators(indicators?: StatusIndicator[]) {
   if (!indicators || indicators.length === 0) {
@@ -147,6 +153,7 @@ export default function CampaignDashboard({ initialSummary, initialWeek = 'all',
   }, [isAdmin]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
+  const [activeTab, setActiveTab] = useState<CampaignTab>('leaderboard');
 
   useEffect(() => {
     if (!lastUploadAt) {
@@ -161,6 +168,7 @@ export default function CampaignDashboard({ initialSummary, initialWeek = 'all',
   }, [lastUploadAt]);
 
   const visibleWeeks = getVisibleWeeks(summary, selectedWeek);
+  const activityOverview = summary.activity_overview ?? [];
   const filteredRows = useMemo(() => filterRows(summary.rows, userFilter), [summary.rows, userFilter]);
   const lastUploadLabel = useMemo(() => {
     if (!lastUploadAt) {
@@ -666,90 +674,180 @@ export default function CampaignDashboard({ initialSummary, initialWeek = 'all',
         </div>
       </section>
 
-      {/* Leaderboard Section */}
-      <section className="section">
-        <h2 className="section-title">Campaign Leaderboard</h2>
-        <div className="table-wrapper">
-          <div className="table-scroll">
-            <div className="table-scroll-inner">
-              <table className="data-table">
-              <thead>
-                <tr className="text-left text-xs font-semibold uppercase">
-                <th
-                  scope="col"
-                  className="cursor-pointer"
-                  onClick={() => handleSort('user')}
-                  style={{ cursor: 'pointer' }}
-                  title="Click to sort"
-                >
-                  User {sortColumn === 'user' && (sortDirection === 'asc' ? '↑' : '↓')}
-                </th>
-                <th scope="col" style={{ width: '10rem' }}>
-                  Status
-                </th>
-                {visibleWeeks.map((week) => (
-                  <th
-                    scope="col"
-                    key={week}
-                    className="cursor-pointer text-center"
-                    onClick={() => handleSort(`week-${week}` as SortColumn)}
-                    style={{ cursor: 'pointer' }}
-                    title="Click to sort"
-                  >
-                    Week {week} {sortColumn === `week-${week}` && (sortDirection === 'asc' ? '↑' : '↓')}
-                  </th>
-                ))}
-                <th
-                  scope="col"
-                  className="cursor-pointer text-right"
-                  onClick={() => handleSort('totalPoints')}
-                  style={{ cursor: 'pointer' }}
-                  title="Click to sort"
-                >
-                  Total Points {sortColumn === 'totalPoints' && (sortDirection === 'asc' ? '↑' : '↓')}
-                </th>
-                <th
-                  scope="col"
-                  className="cursor-pointer text-right"
-                  onClick={() => handleSort('currentRank')}
-                  style={{ cursor: 'pointer' }}
-                  title="Click to sort"
-                >
-                  Rank {sortColumn === 'currentRank' && (sortDirection === 'asc' ? '↑' : '↓')}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedRows.length === 0 && (
-                <tr>
-                  <td colSpan={visibleWeeks.length + 4} style={{ textAlign: 'center', padding: '2rem', color: '#6b7280' }}>
-                    No submissions match the current filters.
-                  </td>
-                </tr>
-              )}
-              {sortedRows.map((row) => (
-                <tr key={row.user.email}>
-                  <td>
-                    <div style={{ fontWeight: '600', color: '#1f2937' }}>{formatName(row.user)}</div>
-                    <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{row.user.email}</div>
-                  </td>
-                  <td className="status-cell">{renderStatusIndicators(row.statusIndicators)}</td>
-                  {visibleWeeks.map((week) => (
-                    <td key={`${row.user.email}-${week}`} style={{ textAlign: 'center', fontWeight: '500' }}>
-                      {row.pointsByWeek?.[week] ?? 0}
-                    </td>
-                  ))}
-                  <td style={{ textAlign: 'right', fontWeight: '600' }}>
-                    {row.totalPoints}
-                  </td>
-                  <td style={{ textAlign: 'right' }}>{renderRankBadge(row.currentRank)}</td>
-                </tr>
-              ))}
-            </tbody>
-              </table>
-            </div>
+      <nav className="tab-bar">
+        {dashboardTabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            className={`tab-button ${activeTab === tab.id ? 'active' : ''}`}
+            onClick={() => setActiveTab(tab.id)}
+            disabled={loading}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
+
+      <section className="tab-content">
+        {activeTab === 'leaderboard' && (
+          <div className="tab-section">
+            <section className="section">
+              <h2 className="section-title">Campaign Leaderboard</h2>
+              <div className="table-wrapper">
+                <div className="table-scroll">
+                  <div className="table-scroll-inner">
+                    <table className="data-table">
+                      <thead>
+                        <tr className="text-left text-xs font-semibold uppercase">
+                          <th
+                            scope="col"
+                            className="cursor-pointer"
+                            onClick={() => handleSort('user')}
+                            style={{ cursor: 'pointer' }}
+                            title="Click to sort"
+                          >
+                            User {sortColumn === 'user' && (sortDirection === 'asc' ? '↑' : '↓')}
+                          </th>
+                          <th scope="col" style={{ width: '10rem' }}>
+                            Status
+                          </th>
+                          {visibleWeeks.map((week) => (
+                            <th
+                              scope="col"
+                              key={week}
+                              className="cursor-pointer text-center"
+                              onClick={() => handleSort(`week-${week}` as SortColumn)}
+                              style={{ cursor: 'pointer' }}
+                              title="Click to sort"
+                            >
+                              Week {week} {sortColumn === `week-${week}` && (sortDirection === 'asc' ? '↑' : '↓')}
+                            </th>
+                          ))}
+                          <th
+                            scope="col"
+                            className="cursor-pointer text-right"
+                            onClick={() => handleSort('totalPoints')}
+                            style={{ cursor: 'pointer' }}
+                            title="Click to sort"
+                          >
+                            Total Points {sortColumn === 'totalPoints' && (sortDirection === 'asc' ? '↑' : '↓')}
+                          </th>
+                          <th
+                            scope="col"
+                            className="cursor-pointer text-right"
+                            onClick={() => handleSort('currentRank')}
+                            style={{ cursor: 'pointer' }}
+                            title="Click to sort"
+                          >
+                            Rank {sortColumn === 'currentRank' && (sortDirection === 'asc' ? '↑' : '↓')}
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sortedRows.length === 0 && (
+                          <tr>
+                            <td
+                              colSpan={visibleWeeks.length + 4}
+                              style={{ textAlign: 'center', padding: '2rem', color: '#6b7280' }}
+                            >
+                              No submissions match the current filters.
+                            </td>
+                          </tr>
+                        )}
+                        {sortedRows.map((row) => (
+                          <tr key={row.user.email}>
+                            <td>
+                              <div style={{ fontWeight: '600', color: '#1f2937' }}>{formatName(row.user)}</div>
+                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{row.user.email}</div>
+                            </td>
+                            <td className="status-cell">{renderStatusIndicators(row.statusIndicators)}</td>
+                            {visibleWeeks.map((week) => (
+                              <td key={`${row.user.email}-${week}`} style={{ textAlign: 'center', fontWeight: '500' }}>
+                                {row.pointsByWeek?.[week] ?? 0}
+                              </td>
+                            ))}
+                            <td style={{ textAlign: 'right', fontWeight: '600' }}>{row.totalPoints}</td>
+                            <td style={{ textAlign: 'right' }}>{renderRankBadge(row.currentRank)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </section>
           </div>
-        </div>
+        )}
+
+        {activeTab === 'activity' && (
+          <div className="tab-section">
+            <section className="section">
+              <h2 className="section-title">Activity Overview</h2>
+              <p className="muted-text" style={{ marginBottom: '1rem' }}>
+                👥 counts represent unique users submitting in that category each week. ⭐ sums all approved points awarded.
+              </p>
+              <div className="table-wrapper">
+                <div className="table-scroll">
+                  <div className="table-scroll-inner">
+                    <table className="data-table">
+                      <thead>
+                        <tr className="text-left text-xs font-semibold uppercase">
+                          <th scope="col">Activity Type</th>
+                          {visibleWeeks.map((week) => (
+                            <th key={week} scope="col" className="text-center">
+                              Week {week}
+                            </th>
+                          ))}
+                          <th scope="col" className="text-center">
+                            Total Participants
+                          </th>
+                          <th scope="col" className="text-center">
+                            Total Points
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {activityOverview.length === 0 ? (
+                          <tr>
+                            <td
+                              colSpan={visibleWeeks.length + 3}
+                              style={{ textAlign: 'center', padding: '2rem', color: '#6b7280' }}
+                            >
+                              No activity data available yet.
+                            </td>
+                          </tr>
+                        ) : (
+                          activityOverview.map((activity) => (
+                            <tr key={activity.activityType}>
+                              <td style={{ fontWeight: '600', color: '#1f2937' }}>{activity.activityType}</td>
+                              {visibleWeeks.map((week) => {
+                                const weekStats = activity.weeks?.[week];
+                                const participants = weekStats?.participants ?? 0;
+                                const points = weekStats?.points ?? 0;
+                                return (
+                                  <td key={`${activity.activityType}-${week}`} style={{ textAlign: 'center' }}>
+                                    <div style={{ fontWeight: '600' }}>👥 {participants.toLocaleString()}</div>
+                                    <div style={{ color: '#6b7280' }}>⭐ {points.toLocaleString()}</div>
+                                  </td>
+                                );
+                              })}
+                              <td style={{ textAlign: 'center', fontWeight: '600' }}>
+                                {activity.totalParticipants.toLocaleString()}
+                              </td>
+                              <td style={{ textAlign: 'center', fontWeight: '600' }}>
+                                {activity.totalPoints.toLocaleString()}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
       </section>
     </div>
   );

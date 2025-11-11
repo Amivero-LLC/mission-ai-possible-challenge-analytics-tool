@@ -30,6 +30,18 @@ class StatusIndicator(BaseModel):
     examples: List[str] = Field(default_factory=list)
 
 
+class ActivityWeekSummary(BaseModel):
+    participants: int = Field(..., ge=0)
+    points: int = Field(..., ge=0)
+
+
+class ActivityOverviewEntry(BaseModel):
+    activityType: str
+    totalParticipants: int = Field(..., ge=0)
+    totalPoints: int = Field(..., ge=0)
+    weeks: Dict[int, ActivityWeekSummary] = Field(default_factory=dict)
+
+
 class CampaignLeaderboardRow(BaseModel):
     user: CampaignUserInfo
     pointsByWeek: Dict[int, float] = Field(default_factory=dict)
@@ -42,3 +54,4 @@ class CampaignSummaryResponse(BaseModel):
     weeks_present: List[int] = Field(default_factory=list)
     rows: List[CampaignLeaderboardRow] = Field(default_factory=list)
     last_upload_at: str | None = None
+    activity_overview: List[ActivityOverviewEntry] = Field(default_factory=list)

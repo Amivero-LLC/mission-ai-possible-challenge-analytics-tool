@@ -23,6 +23,8 @@ from ..db import crud
 from ..db.models import Model, Rank, SubmittedActivity, User
 from ..services.dashboard import MissionAnalysisContext, build_mission_analysis_context
 from .schemas import (
+    ActivityOverviewEntry,
+    ActivityWeekSummary,
     CampaignLeaderboardRow,
     CampaignSummaryResponse,
     CampaignUserInfo,
@@ -628,6 +630,91 @@ def _decimal_to_int(value: Decimal | None) -> int:
     return int(quantized)
 
 
+def _build_activity_overview(
+    session: Session,
+    *,
+    week_filter: int | None,
+    normalized_user: str | None,
+    capped_weeks: list[int],
+) -> list[ActivityOverviewEntry]:
+    if not capped_weeks:
+        return []
+
+    filters = [func.lower(SubmittedActivity.activity_status) == REVIEW_STATUS]
+    if week_filter is not None:
+        filters.append(SubmittedActivity.week_id == week_filter)
+    elif capped_weeks:
+        filters.append(SubmittedActivity.week_id.in_(capped_weeks))
+    if normalized_user:
+        filters.append(func.lower(SubmittedActivity.email) == normalized_user)
+
+    activity_rows = session.execute(
+        select(
+            SubmittedActivity.activity_type,
+            SubmittedActivity.week_id,
+            func.count(func.distinct(SubmittedActivity.user_sharepoint_id)).label("participants"),
+            func.sum(SubmittedActivity.points_awarded).label("points"),
+        )
+        .where(*filters)
+        .group_by(SubmittedActivity.activity_type, SubmittedActivity.week_id)
+    ).all()
+
+    participant_rows = session.execute(
+        select(
+            SubmittedActivity.activity_type,
+            SubmittedActivity.user_sharepoint_id,
+        )
+        .where(*filters)
+        .distinct()
+    ).all()
+
+    participants_by_activity: dict[str, set[int]] = defaultdict(set)
+    for activity_type, sharepoint_id in participant_rows:
+        if activity_type is None or sharepoint_id is None:
+            continue
+        participants_by_activity[str(activity_type)].add(int(sharepoint_id))
+
+    overview_map: dict[str, dict] = {}
+    for activity_type, week_id, participants, points in activity_rows:
+        if activity_type is None or week_id is None or week_id not in capped_weeks:
+            continue
+        key = str(activity_type)
+        entry = overview_map.setdefault(
+            key,
+            {
+                "weeks": {},
+                "total_points": 0,
+            },
+        )
+        entry["weeks"][int(week_id)] = {
+            "participants": int(participants or 0),
+            "points": _decimal_to_int(points),
+        }
+        entry["total_points"] += entry["weeks"][int(week_id)]["points"]
+
+    activity_overview: list[ActivityOverviewEntry] = []
+    for activity_type, data in overview_map.items():
+        total_participants = len(participants_by_activity.get(activity_type, set()))
+        weeks_payload = {
+            week: ActivityWeekSummary(
+                participants=week_info["participants"],
+                points=week_info["points"],
+            )
+            for week, week_info in sorted(data["weeks"].items())
+        }
+        activity_overview.append(
+            ActivityOverviewEntry(
+                activityType=activity_type,
+                totalParticipants=total_participants,
+                totalPoints=data.get("total_points", 0),
+                weeks=weeks_payload,
+            )
+        )
+
+    activity_overview.sort(key=lambda entry: (-entry.totalPoints, entry.activityType.lower()))
+    return activity_overview
+
+
 def _collect_completed_challenges(
     context: MissionAnalysisContext | None,
 ) -> dict[str, dict[str, CompletionRecord]]:
@@ -751,9 +838,21 @@ def get_campaign_summary(session: Session, *, week: str | None, user_filter: str
         base_query = base_query.where(func.lower(SubmittedActivity.email) == normalized_user)
 
     aggregates = session.execute(base_query).all()
+    activity_overview = _build_activity_overview(
+        session,
+        week_filter=week_filter,
+        normalized_user=normalized_user,
+        capped_weeks=capped_weeks,
+    )
 
     if not aggregates:
-        return CampaignSummaryResponse(weeks_present=capped_weeks, rows=[])
+        last_upload_at = _get_last_upload_timestamp(session)
+        return CampaignSummaryResponse(
+            weeks_present=capped_weeks,
+            rows=[],
+            last_upload_at=last_upload_at,
+            activity_overview=activity_overview,
+        )
 
     grouped: dict[str, dict] = {}
     for entry in aggregates:
@@ -819,4 +918,9 @@ def get_campaign_summary(session: Session, *, week: str | None, user_filter: str
 
     rows.sort(key=lambda item: (-item.totalPoints, item.user.firstName or "", item.user.email))
     last_upload_at = _get_last_upload_timestamp(session)
-    return CampaignSummaryResponse(weeks_present=capped_weeks, rows=rows, last_upload_at=last_upload_at)
+    return CampaignSummaryResponse(
+        weeks_present=capped_weeks,
+        rows=rows,
+        last_upload_at=last_upload_at,
+        activity_overview=activity_overview,
+    )
