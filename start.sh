@@ -63,8 +63,29 @@ fi
 
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 
+detect_python_bin() {
+  if [[ -n "${PYTHON_BIN:-}" ]]; then
+    echo "${PYTHON_BIN}"
+    return
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    echo "python3"
+    return
+  fi
+  if command -v python >/dev/null 2>&1; then
+    echo "python"
+    return
+  fi
+  echo ""
+}
+
 start_backend() {
-  local python_bin="${PYTHON_BIN:-python3}"
+  local python_bin
+  python_bin="$(detect_python_bin)"
+  if [[ -z "${python_bin}" ]]; then
+    echo "Error: python interpreter not found. Set PYTHON_BIN to the appropriate executable." >&2
+    exit 1
+  fi
   local host="${BACKEND_HOST:-0.0.0.0}"
   local port="${BACKEND_PORT:-8000}"
 
@@ -77,13 +98,16 @@ start_backend() {
 
   if [[ "${SKIP_DB_MIGRATIONS:-0}" != "1" ]]; then
     cd "${REPO_ROOT}/backend"
-    if "${python_bin}" -c "import importlib; importlib.import_module('alembic')" >/dev/null 2>&1; then
+    if command -v alembic >/dev/null 2>&1; then
       echo "Running Alembic migrations"
+      alembic upgrade head
+    elif "${python_bin}" -m alembic --help >/dev/null 2>&1; then
+      echo "Running Alembic migrations through python -m"
       "${python_bin}" -m alembic upgrade head
     else
-      echo "Warning: Alembic not installed; skipping migrations" >&2
+      echo "Alembic not available; skipping migrations" >&2
     fi
-    cd "${REPO_ROOT}"
+    cd "${REPO_ROOT}" || exit 1
   fi
 
   exec "${python_bin}" -m uvicorn backend.app.main:app --host "${host}" --port "${port}"
