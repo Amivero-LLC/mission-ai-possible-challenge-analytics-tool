@@ -14,6 +14,7 @@ interface BackendStatus {
 function HealthPage() {
   const [mounted, setMounted] = useState(false);
   const [currentTime, setCurrentTime] = useState("");
+  const [frontendOrigin, setFrontendOrigin] = useState("");
   const [backend, setBackend] = useState<BackendStatus>({
     status: "checking",
     apiUrl: "",
@@ -22,6 +23,7 @@ function HealthPage() {
   useEffect(() => {
     setMounted(true);
     setCurrentTime(new Date().toISOString());
+    setFrontendOrigin(window.location.origin);
 
     const apiUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
     setBackend((prev) => ({ ...prev, apiUrl }));
@@ -204,6 +206,24 @@ function HealthPage() {
                   <li>Ensure firewall rules permit traffic between services</li>
                   <li>For Railway: Use http://&lt;service-name&gt;.railway.internal for internal calls</li>
                 </ul>
+              </div>
+              <div>
+                <h4 className="font-medium text-gray-700 mb-2">CORS Configuration</h4>
+                <div className="text-sm text-gray-600 space-y-2">
+                  <div className="bg-yellow-50 border border-yellow-200 rounded p-3">
+                    <p className="font-semibold text-yellow-800 mb-1">⚠️ IMPORTANT FOR RAILWAY:</p>
+                    <p className="mb-2">Your backend needs to allow requests from this frontend origin:</p>
+                    <p className="font-mono text-xs bg-white p-2 rounded border break-all">
+                      {frontendOrigin}
+                    </p>
+                    <p className="mt-2 text-xs">
+                      Add this to your Railway <strong>backend service</strong> environment variables:
+                    </p>
+                    <p className="font-mono text-xs bg-white p-2 rounded border mt-1 break-all">
+                      CORS_ALLOW_ORIGINS={frontendOrigin}
+                    </p>
+                  </div>
+                </div>
               </div>
               <div>
                 <h4 className="font-medium text-gray-700 mb-2">Environment Variables</h4>
