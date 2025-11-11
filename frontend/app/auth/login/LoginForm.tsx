@@ -89,6 +89,7 @@ export default function LoginForm({ redirectParam, initialNotice = null }: Login
           sessionStorage.setItem("maip_post_auth_redirect", redirectTarget || "/");
         }
         await login({ email, password, remember_me: rememberMe });
+        console.log("[Login] Login successful, redirecting...");
         const storedTarget =
           (typeof window !== "undefined" ? sessionStorage.getItem("maip_post_auth_redirect") : null) ||
           redirectTarget ||
@@ -97,7 +98,9 @@ export default function LoginForm({ redirectParam, initialNotice = null }: Login
           sessionStorage.setItem("maip_auth_notice", "signed_in");
           sessionStorage.removeItem("maip_post_auth_redirect");
         }
-        router.replace(storedTarget || "/");
+        console.log("[Login] Redirecting to:", storedTarget);
+        // Use window.location for hard navigation to ensure cookies are sent with next request
+        window.location.href = storedTarget || "/";
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unable to sign in";
         setBanner({ message, tone: "error" });

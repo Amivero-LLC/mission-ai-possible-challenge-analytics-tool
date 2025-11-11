@@ -25,16 +25,29 @@ async function authRequest<TBody = unknown, TResult = unknown>(
   const url = new URL(path, baseUrl);
   const { method = "GET", body, headers = {}, cache = "no-store" } = options;
 
-  const response = await fetch(url.toString(), {
-    method,
-    cache,
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...headers,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  console.log(`[Auth] ${method} ${url.toString()}`);
+
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      method,
+      cache,
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        ...headers,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(30000), // 30 second timeout
+    });
+    console.log(`[Auth] Response: ${response.status} ${response.statusText}`);
+  } catch (error) {
+    console.error(`[Auth] Request failed:`, error);
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new Error("Request timed out. Please check your network connection and try again.");
+    }
+    throw new Error("Unable to connect to the server. Please check your network connection.");
+  }
 
   if (response.status === 204) {
     return undefined as TResult;

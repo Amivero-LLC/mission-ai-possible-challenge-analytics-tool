@@ -244,11 +244,81 @@ Make sure these match between frontend and backend:
 # Backend
 AUTH_MODE=DEFAULT
 SESSION_SECRET=your-secret-here
+SESSION_COOKIE_SECURE=true
+SESSION_COOKIE_SAME_SITE=lax
 
 # Frontend
 AUTH_MODE=DEFAULT
 NEXT_PUBLIC_AUTH_MODE=DEFAULT
 ```
+
+### Login Hangs / "Verifying Credentials" Spins Forever
+
+**Symptom**: After creating admin user, login form hangs with spinning "Verifying credentials" message
+
+**Causes**:
+1. **CORS not configured for frontend origin** - The backend blocks POST requests
+2. **API_BASE_URL mismatch** - Frontend is calling wrong backend URL
+3. **Network timeout** - Backend takes too long to respond
+
+**Debug Steps**:
+
+1. **Open browser DevTools Console** (F12) and attempt login. Look for:
+   ```
+   [Auth] POST https://backend-production-xxxx.up.railway.app/api/auth/login
+   [Auth] Response: 200 OK
+   ```
+
+2. **Check for CORS errors** in the console:
+   ```
+   Access to fetch at '...' from origin '...' has been blocked by CORS policy
+   ```
+   If you see this, verify `CORS_ALLOW_ORIGINS` is set correctly in backend.
+
+3. **Check the Network tab** in DevTools:
+   - Look for the `/api/auth/login` request
+   - Check if it's:
+     - **Pending forever**: Timeout or network issue
+     - **Failed with status code**: CORS or server error
+     - **Succeeded but frontend hangs**: Frontend routing issue
+
+4. **Verify environment variables**:
+   ```bash
+   # Backend must have:
+   CORS_ALLOW_ORIGINS=https://your-frontend-domain.up.railway.app
+
+   # Frontend must have:
+   NEXT_PUBLIC_API_BASE_URL=https://backend-production-xxxx.up.railway.app
+   ```
+
+**Solutions**:
+
+1. **Add exact frontend origin to backend CORS**:
+   - Go to: `/status/health` on your frontend
+   - Copy the exact origin URL shown in the yellow warning box
+   - Add to backend: `CORS_ALLOW_ORIGINS=https://frontend-production-xxxx.up.railway.app`
+
+2. **Check backend logs** during login attempt:
+   ```bash
+   railway logs --service backend
+   ```
+   Look for POST /api/auth/login requests and any errors.
+
+3. **Test backend directly** with curl:
+   ```bash
+   curl -X POST https://your-backend.up.railway.app/api/auth/login \
+     -H "Content-Type: application/json" \
+     -H "Origin: https://your-frontend.up.railway.app" \
+     -d '{"email":"test@example.com","password":"test123"}'
+   ```
+   Should return either auth tokens or a clear error message.
+
+4. **Session cookie configuration**: Check if cookies are being set:
+   - In DevTools Application tab → Cookies
+   - Look for `maip_session` cookie
+   - If missing, check backend `SESSION_COOKIE_SECURE` and `SESSION_COOKIE_SAME_SITE` settings
+
+**Note**: You cannot use `CORS_ALLOW_ORIGINS=*` with `credentials: "include"`. CORS requires exact origins when credentials are involved.
 
 ---
 
