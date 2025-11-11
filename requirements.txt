@@ -1,3 +1,0 @@
-# Root requirements file for Railpack/Railway backend deployment
-# This references the actual backend requirements
--r backend/requirements.txt
