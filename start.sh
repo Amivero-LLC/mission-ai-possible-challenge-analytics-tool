@@ -98,22 +98,36 @@ detect_python_bin() {
     echo "${PYTHON_BIN}"
     return
   fi
-  if [[ -x "${REPO_ROOT}/.venv/bin/python" ]]; then
-    echo "${REPO_ROOT}/.venv/bin/python"
-    return
+
+  local -a default_candidates=(
+    "${REPO_ROOT}/.venv/bin/python"
+    "${REPO_ROOT}/venv/bin/python"
+    "${REPO_ROOT}/backend/.venv/bin/python"
+    "/app/.venv/bin/python"
+    "/opt/venv/bin/python"
+    "/usr/local/bin/python3"
+    "/usr/bin/python3"
+  )
+
+  local -a hint_candidates=()
+  if [[ -n "${PYTHON_BIN_HINTS:-}" ]]; then
+    IFS=":" read -r -a hint_candidates <<<"${PYTHON_BIN_HINTS}"
   fi
-  if [[ -x "${REPO_ROOT}/venv/bin/python" ]]; then
-    echo "${REPO_ROOT}/venv/bin/python"
-    return
-  fi
-  if command -v python3 >/dev/null 2>&1; then
-    echo "python3"
-    return
-  fi
-  if command -v python >/dev/null 2>&1; then
-    echo "python"
-    return
-  fi
+
+  for candidate in "${hint_candidates[@]}" "${default_candidates[@]}"; do
+    if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+      echo "${candidate}"
+      return
+    fi
+  done
+
+  local -a command_candidates=("python3.12" "python3.11" "python3.10" "python3" "python")
+  for cmd in "${command_candidates[@]}"; do
+    if command -v "${cmd}" >/dev/null 2>&1; then
+      echo "${cmd}"
+      return
+    fi
+  done
   echo ""
 }
 

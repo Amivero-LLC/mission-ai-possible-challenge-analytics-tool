@@ -140,7 +140,7 @@ Navigate to `/campaign` to review leaderboard standings that blend mission-deriv
 Additional tips:
 - Naming the services `backend` / `frontend` lets the script infer the role even without `SERVICE_ROLE`, but setting it explicitly avoids warnings.
 - Single-service installs can set `DEFAULT_SERVICE_ROLE=backend` to silence the fallback message when the Railway service name doesn’t include “backend”.
-- Point `PYTHON_BIN` at the exact interpreter produced during the build (for example `/app/.venv/bin/python`) so Uvicorn launches with the same environment that holds dependencies.
+- Point `PYTHON_BIN` at the exact interpreter produced during the build (for example `/app/.venv/bin/python`) so Uvicorn launches with the same environment that holds dependencies. If the interpreter path changes between environments, set `PYTHON_BIN_HINTS` to a colon-delimited list (e.g., `/app/.venv/bin/python:/opt/venv/bin/python`) and `start.sh` will auto-pick the first executable found.
 - When using Railway Postgres, either populate the `DB_*` variables or export `SQLALCHEMY_DATABASE_URI` using Railway’s managed connection string.
 
 ## CLI & Automation Helpers
