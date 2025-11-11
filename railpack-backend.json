@@ -3,20 +3,6 @@
   "packages": {
     "python": "3.11"
   },
-  "steps": {
-    "install": {
-      "inputs": [
-        {
-          "local": true,
-          "include": ["."]
-        }
-      ],
-      "commands": [
-        "pip install --upgrade pip",
-        "pip install -r backend/requirements.txt"
-      ]
-    }
-  },
   "deploy": {
     "startCommand": "bash start.sh"
   }

@@ -1,0 +1,12 @@
+{
+  "name": "mission-ai-possible-challenge-analytics-tool",
+  "version": "1.0.0",
+  "description": "Mission AI Possible Challenge Analytics Tool - Root package for Railpack",
+  "private": true,
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "build:frontend": "cd frontend && npm run build"
+  }
+}

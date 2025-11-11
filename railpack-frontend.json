@@ -4,23 +4,10 @@
     "node": "20"
   },
   "steps": {
-    "install": {
-      "inputs": [
-        {
-          "local": true,
-          "include": ["."]
-        }
-      ],
-      "commands": [
-        "cd frontend",
-        "npm ci"
-      ]
-    },
     "build": {
-      "inputs": [{ "step": "install" }],
       "commands": [
-        "cd frontend",
-        "npm run build"
+        "...",
+        "npm run build:frontend"
       ]
     }
   },
