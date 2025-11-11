@@ -225,8 +225,9 @@ export async function fetchCampaignSummary(
     params.set("user", query.user);
   }
 
-  if ([...params.keys()].length > 0) {
-    url.search = params.toString();
+  const queryString = params.toString();
+  if (queryString) {
+    url.search = queryString;
   }
 
   const headers: Record<string, string> = {};
