@@ -5,6 +5,12 @@
   },
   "steps": {
     "install": {
+      "inputs": [
+        {
+          "local": true,
+          "include": ["."]
+        }
+      ],
       "commands": [
         "cd frontend",
         "npm ci"

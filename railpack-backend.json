@@ -5,6 +5,12 @@
   },
   "steps": {
     "install": {
+      "inputs": [
+        {
+          "local": true,
+          "include": ["."]
+        }
+      ],
       "commands": [
         "pip install --upgrade pip",
         "pip install -r backend/requirements.txt"
