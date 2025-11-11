@@ -638,11 +638,24 @@ body {
 }
 
 .table-wrapper {
-  overflow-x: auto;
   border-radius: 12px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
   border: 1px solid var(--color-border);
   background: var(--color-surface);
+  position: relative;
+  overflow: visible;
+}
+
+.table-scroll {
+  position: relative;
+  overflow: visible;
+}
+
+.table-scroll-inner {
+  overflow-x: auto;
+  overflow-y: visible;
+  border-radius: inherit;
+  width: 100%;
 }
 
 .data-table {
@@ -671,6 +684,8 @@ body {
   border-bottom: 1px solid var(--color-border);
   font-size: 0.9rem;
   color: var(--color-text);
+  position: relative;
+  overflow: visible;
 }
 
 .data-table tbody tr:nth-child(even) {
@@ -1208,6 +1223,85 @@ code {
   border-radius: 4px;
   font-size: 0.9rem;
   font-family: 'Monaco', 'Courier New', monospace;
+}
+
+.status-cell {
+  min-width: 12rem;
+  position: relative;
+  overflow: visible;
+}
+
+.status-pill-wrapper {
+  position: relative;
+  z-index: 1;
+  display: inline-block;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-right: 0.45rem;
+  margin-top: 0.2rem;
+  background: #e5e7eb;
+  color: #1f2937;
+}
+
+.status-pill.info {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.status-pill.warning {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.status-pill.error {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.status-pill.ok {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status-tooltip {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  z-index: 50;
+  left: 0;
+  bottom: 120%;
+  min-width: 220px;
+  background: #111827;
+  color: #f9fafb;
+  padding: 0.6rem 0.8rem;
+  border-radius: 0.6rem;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  transition: opacity 0.2s ease;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.35);
+}
+
+.status-tooltip ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1rem;
+}
+
+.status-tooltip li {
+  list-style: disc;
+}
+
+.status-pill-wrapper:hover .status-tooltip,
+.status-pill-wrapper:focus-within .status-tooltip {
+  visibility: visible;
+  opacity: 1;
 }
 
 /* Mobile Responsive Styles */

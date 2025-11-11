@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Literal
 
 from pydantic import BaseModel, Field
 
@@ -18,11 +18,24 @@ class CampaignUserInfo(BaseModel):
     email: str
 
 
+StatusSeverity = Literal["info", "warning", "error"]
+
+
+class StatusIndicator(BaseModel):
+    code: str
+    label: str
+    severity: StatusSeverity = Field(default="info")
+    message: str
+    count: int | None = Field(default=None, ge=0)
+    examples: List[str] = Field(default_factory=list)
+
+
 class CampaignLeaderboardRow(BaseModel):
     user: CampaignUserInfo
     pointsByWeek: Dict[int, float] = Field(default_factory=dict)
     totalPoints: float = Field(..., ge=0)
     currentRank: int = Field(..., ge=0)
+    statusIndicators: List[StatusIndicator] = Field(default_factory=list)
 
 
 class CampaignSummaryResponse(BaseModel):

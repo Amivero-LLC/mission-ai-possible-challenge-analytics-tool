@@ -1188,7 +1188,9 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                 <section className="section">
                   <h2 className="section-title">🏆 Leaderboard - Top Performers</h2>
                   <div className="table-wrapper">
-                    <table className="data-table">
+                    <div className="table-scroll">
+                      <div className="table-scroll-inner">
+                        <table className="data-table">
                       <thead>
                         <tr>
                           <th
@@ -1276,7 +1278,9 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                           </tr>
                         ))}
                       </tbody>
-                    </table>
+                        </table>
+                      </div>
+                    </div>
                   </div>
                 </section>
               </>
@@ -1389,7 +1393,9 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                     </div>
                   ) : (
                     <div className="table-wrapper">
-                      <table className="data-table">
+                      <div className="table-scroll">
+                        <div className="table-scroll-inner">
+                          <table className="data-table">
                         <thead>
                           <tr>
                             <th
@@ -1457,7 +1463,9 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                             </tr>
                           ))}
                         </tbody>
-                      </table>
+                          </table>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </section>
@@ -1471,7 +1479,9 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
             <section className="section">
               <h2 className="section-title">💬 All Chats</h2>
               <div className="table-wrapper">
-                <table className="data-table">
+                <div className="table-scroll">
+                  <div className="table-scroll-inner">
+                    <table className="data-table">
                   <thead>
                     <tr>
                       <th
@@ -1558,7 +1568,9 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                    </table>
+                  </div>
+                </div>
               </div>
             </section>
           </div>

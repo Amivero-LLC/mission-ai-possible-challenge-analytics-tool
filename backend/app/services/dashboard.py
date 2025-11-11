@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
@@ -52,6 +53,19 @@ from ..schemas import (
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class MissionAnalysisContext:
+    analyzer: MissionAnalyzer
+    data_source: str
+    user_info_map: Dict[str, dict]
+    model_lookup: Dict[str, str]
+    mission_model_aliases: Set[str]
+    alias_to_primary: Dict[str, str]
+    week_mapping: Dict[str, str]
+    points_mapping: Dict[str, int]
+    difficulty_mapping: Dict[str, str]
 
 
 def _normalize_to_utc(dt: Optional[datetime]) -> Optional[datetime]:
@@ -377,6 +391,160 @@ def _filter_chats_by_mission_models(chats: List[dict], mission_model_aliases: Se
             filtered_chats.append(chat)
 
     return filtered_chats
+
+
+def build_mission_analysis_context(
+    *,
+    data_file: Optional[str] = None,
+    user_names_file: Optional[str] = None,
+    sort_by: SortOption = SortOption.completions,
+    filter_week: Optional[str] = None,
+    filter_challenge: Optional[str] = None,
+    filter_user: Optional[str] = None,
+    filter_status: Optional[str] = None,
+    force_refresh: bool = False,
+    reload_mode: str = "upsert",
+    strict: bool = True,
+) -> Optional[MissionAnalysisContext]:
+    """
+    Build and cache a MissionAnalyzer instance plus supporting metadata so other
+    services can reuse the same mission calculations.
+
+    Args:
+        strict: When False, failures to assemble the analyzer return ``None`` so
+            callers can gracefully skip mission-derived features without
+            surfacing errors to end users.
+    """
+    resolved_user_names = user_names_file or str(Path(DATA_DIR) / "user_names.json")
+
+    try:
+        (
+            model_lookup,
+            mission_model_aliases,
+            alias_to_primary,
+            week_mapping,
+            points_mapping,
+            difficulty_mapping,
+        ) = _load_model_metadata(
+            force_refresh=force_refresh,
+            mode=reload_mode,
+        )
+
+        data_source = "database"
+        chats_payload: Optional[List[dict]] = None
+
+        if force_refresh:
+            chats_payload = _fetch_remote_chats()
+            if chats_payload is not None:
+                persist_chats(chats_payload, mode=reload_mode)
+                data_source = "api"
+
+        if not chats_payload:
+            chats_payload = load_chats()
+            if chats_payload:
+                data_source = "database"
+
+        if not chats_payload:
+            fallback_remote = _fetch_remote_chats()
+            if fallback_remote:
+                chats_payload = fallback_remote
+                persist_chats(chats_payload, mode="upsert")
+                data_source = "api"
+
+        if not chats_payload:
+            target_file = data_file or find_latest_export()
+            if not target_file:
+                raise HTTPException(
+                    status_code=503,
+                    detail="No data available. Please configure Open WebUI credentials or provide a chat export.",
+                )
+            logger.info("Using fallback export file: %s", target_file)
+            try:
+                with open(target_file, "r", encoding="utf-8") as f:
+                    chats_payload = json.load(f)
+                data_source = "file"
+                persist_chats(chats_payload, mode="upsert")
+            except (FileNotFoundError, json.JSONDecodeError) as exc:
+                logger.error("Failed to load fallback export: %s", exc)
+                raise HTTPException(
+                    status_code=503,
+                    detail="Data is unavailable. Please refresh from Open WebUI.",
+                ) from exc
+
+        if not chats_payload:
+            raise HTTPException(
+                status_code=503,
+                detail="Unable to load chat data. Please refresh from Open WebUI.",
+            )
+
+        filtered_chats = _filter_chats_by_mission_models(chats_payload, mission_model_aliases)
+        logger.info(
+            "Prepared %d mission-related chats from %d total chats (data source=%s)",
+            len(filtered_chats),
+            len(chats_payload),
+            data_source,
+        )
+
+        user_info_map: Dict[str, dict] = {}
+        remote_users_payload: Optional[Tuple[Dict[str, dict], List[dict]]] = None
+
+        if force_refresh:
+            remote_users_payload = _fetch_remote_users()
+            if remote_users_payload:
+                user_info_map, raw_users = remote_users_payload
+                persist_users(raw_users, mode=reload_mode)
+
+        if not user_info_map:
+            stored_users_map, _ = load_users()
+            if stored_users_map:
+                user_info_map = stored_users_map
+
+        if not user_info_map:
+            if remote_users_payload is None:
+                remote_users_payload = _fetch_remote_users()
+            if remote_users_payload:
+                user_info_map, raw_users = remote_users_payload
+                persist_users(raw_users, mode="upsert")
+
+        user_names_only = {uid: details.get("name", "") for uid, details in user_info_map.items()}
+
+        analyzer = MissionAnalyzer(
+            json_file=None,
+            data=filtered_chats,
+            user_names_file=resolved_user_names,
+            user_names=user_names_only,
+            model_lookup=model_lookup,
+            mission_model_aliases=mission_model_aliases,
+            model_alias_to_primary=alias_to_primary,
+            week_mapping=week_mapping,
+            points_mapping=points_mapping,
+            difficulty_mapping=difficulty_mapping,
+            verbose=False,
+        )
+
+        analyzer.analyze_missions(
+            filter_challenge=filter_challenge,
+            filter_user=filter_user,
+            filter_status=filter_status,
+            filter_week=filter_week,
+        )
+
+        return MissionAnalysisContext(
+            analyzer=analyzer,
+            data_source=data_source,
+            user_info_map=user_info_map,
+            model_lookup=model_lookup,
+            mission_model_aliases=mission_model_aliases,
+            alias_to_primary=alias_to_primary,
+            week_mapping=week_mapping,
+            points_mapping=points_mapping,
+            difficulty_mapping=difficulty_mapping,
+        )
+    except HTTPException as exc:
+        if strict:
+            raise
+        logger.warning("Mission analysis unavailable: %s", getattr(exc, "detail", exc))
+        return None
 
 
 def _fetch_remote_users() -> Optional[Tuple[Dict[str, dict], List[dict]]]:
@@ -965,112 +1133,23 @@ def build_dashboard_response(
         filter_user,
         filter_status,
     )
-    # Resolve user names file relative to DATA_DIR by default
-    resolved_user_names = user_names_file or str(Path(DATA_DIR) / "user_names.json")
-
-    model_lookup, mission_model_aliases, alias_to_primary, week_mapping, points_mapping, difficulty_mapping = _load_model_metadata(
-        force_refresh=force_refresh,
-        mode=reload_mode,
-    )
-
-    data_source = "database"
-    chats_payload: Optional[List[dict]] = None
-
-    if force_refresh:
-        chats_payload = _fetch_remote_chats()
-        if chats_payload is not None:
-            persist_chats(chats_payload, mode=reload_mode)
-            data_source = "api"
-
-    if not chats_payload:
-        chats_payload = load_chats()
-        if chats_payload:
-            data_source = "database"
-
-    if not chats_payload:
-        fallback_remote = _fetch_remote_chats()
-        if fallback_remote:
-            chats_payload = fallback_remote
-            persist_chats(chats_payload, mode="upsert")
-            data_source = "api"
-
-    if not chats_payload:
-        latest_export = find_latest_export()
-        if not latest_export:
-            raise HTTPException(
-                status_code=503,
-                detail="No data available. Please configure Open WebUI credentials or provide a chat export.",
-            )
-        logger.info("Using fallback export file: %s", latest_export)
-        try:
-            with open(latest_export, "r", encoding="utf-8") as f:
-                chats_payload = json.load(f)
-            data_source = "file"
-            persist_chats(chats_payload, mode="upsert")
-        except (FileNotFoundError, json.JSONDecodeError) as exc:
-            logger.error("Failed to load fallback export: %s", exc)
-            raise HTTPException(
-                status_code=503,
-                detail="Data is unavailable. Please refresh from Open WebUI.",
-            ) from exc
-
-    if not chats_payload:
-        raise HTTPException(
-            status_code=503,
-            detail="Unable to load chat data. Please refresh from Open WebUI.",
-        )
-
-    filtered_chats = _filter_chats_by_mission_models(chats_payload, mission_model_aliases)
-    logger.info(
-        "Prepared %d mission-related chats from %d total chats (data source=%s)",
-        len(filtered_chats),
-        len(chats_payload),
-        data_source,
-    )
-
-    user_info_map: Dict[str, dict] = {}
-    remote_users_payload: Optional[Tuple[Dict[str, dict], List[dict]]] = None
-
-    if force_refresh:
-        remote_users_payload = _fetch_remote_users()
-        if remote_users_payload:
-            user_info_map, raw_users = remote_users_payload
-            persist_users(raw_users, mode=reload_mode)
-
-    if not user_info_map:
-        stored_users_map, _ = load_users()
-        if stored_users_map:
-            user_info_map = stored_users_map
-
-    if not user_info_map:
-        if remote_users_payload is None:
-            remote_users_payload = _fetch_remote_users()
-        if remote_users_payload:
-            user_info_map, raw_users = remote_users_payload
-            persist_users(raw_users, mode="upsert")
-
-    user_names_only = {uid: details.get("name", "") for uid, details in user_info_map.items()}
-
-    analyzer = MissionAnalyzer(
-        json_file=None,
-        data=filtered_chats,
-        user_names_file=resolved_user_names,
-        user_names=user_names_only,
-        model_lookup=model_lookup,
-        mission_model_aliases=mission_model_aliases,
-        model_alias_to_primary=alias_to_primary,
-        week_mapping=week_mapping,
-        points_mapping=points_mapping,
-        difficulty_mapping=difficulty_mapping,
-        verbose=False,
-    )
-
-    analyzer.analyze_missions(
+    context = build_mission_analysis_context(
+        data_file=data_file,
+        user_names_file=user_names_file,
+        sort_by=sort_by,
+        filter_week=filter_week,
         filter_challenge=filter_challenge,
         filter_user=filter_user,
         filter_status=filter_status,
-        filter_week=filter_week,
+        force_refresh=force_refresh,
+        reload_mode=reload_mode,
+        strict=True,
     )
+    if context is None:  # pragma: no cover - strict=True prevents None
+        raise HTTPException(status_code=503, detail="Mission analysis unavailable.")
+
+    analyzer = context.analyzer
+    user_info_map = context.user_info_map
 
     # Compose the response sections in the order expected by the frontend.
     summary = _decorate_summary(analyzer, analyzer.get_summary(), user_info_map)
@@ -1082,7 +1161,7 @@ def build_dashboard_response(
         filter_user=filter_user,
         filter_status=filter_status,
         filter_week=filter_week,
-        model_lookup=model_lookup,
+        model_lookup=context.model_lookup,
     )
     challenge_results = _decorate_challenge_results(
         analyzer.get_challenge_results(filter_challenge=filter_challenge, filter_status=filter_status)
@@ -1092,12 +1171,12 @@ def build_dashboard_response(
     export_data_raw = _generate_export_data(
         analyzer=analyzer,
         user_info_map=user_info_map,
-        model_lookup=model_lookup,
-        week_mapping=week_mapping,
-        points_mapping=points_mapping,
-        difficulty_mapping=difficulty_mapping,
-        mission_model_aliases=mission_model_aliases,
-        alias_to_primary=alias_to_primary,
+        model_lookup=context.model_lookup,
+        week_mapping=context.week_mapping,
+        points_mapping=context.points_mapping,
+        difficulty_mapping=context.difficulty_mapping,
+        mission_model_aliases=context.mission_model_aliases,
+        alias_to_primary=context.alias_to_primary,
     )
 
     export_data = [UserChallengeExportRow(**row) for row in export_data_raw]
@@ -1122,7 +1201,7 @@ def build_dashboard_response(
     return DashboardResponse(
         generated_at=datetime.now(timezone.utc),
         last_fetched=last_fetched,
-        data_source=data_source,
+        data_source=context.data_source,
         summary=summary,
         leaderboard=leaderboard,
         mission_breakdown=missions,

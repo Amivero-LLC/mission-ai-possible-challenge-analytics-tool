@@ -2,6 +2,7 @@ import csv
 import io
 import os
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -16,9 +17,19 @@ os.environ.setdefault("SESSION_SECRET", "test-secret")
 TEST_DB_NAME = "test_campaign.sqlite"
 os.environ["DB_NAME"] = TEST_DB_NAME
 
+if "jwt" not in sys.modules:
+    jwt_stub = types.SimpleNamespace(
+        encode=lambda payload, key, algorithm=None: "token",
+        decode=lambda token, key, algorithms=None: {},
+    )
+    sys.modules["jwt"] = jwt_stub
+
 from backend.app.campaign.service import get_campaign_summary, reload_submissions  # noqa: E402
+from backend.app.campaign.status_rules import CompletionRecord, SubmissionRecord  # noqa: E402
 from backend.app.db.models import Model, SubmittedActivity, User  # noqa: E402
 from backend.app.db.session import DATA_DIR, Base, SessionLocal, engine, get_engine_info  # noqa: E402
+
+campaign_service = sys.modules["backend.app.campaign.service"]
 
 CSV_COLUMNS = [
     "UserID",
@@ -194,6 +205,8 @@ def test_mission_mapping_links_models(session):
             id="intel-guardian",
             name="Intel Guardian",
             data={},
+            maip_week="1",
+            maip_points=20,
         )
     )
     session.commit()
@@ -215,6 +228,73 @@ def test_mission_mapping_links_models(session):
     assert summary.missions_linked == 1
 
 
+def test_mission_mapping_prefers_matching_week(session):
+    session.add_all([
+        Model(id="prompt-week-1", name="Prompt Qualification", data={}, maip_week="1", maip_points=15),
+        Model(id="prompt-week-2", name="Prompt Qualification", data={}, maip_week="2", maip_points=25),
+    ])
+    session.commit()
+
+    csv_data = _build_csv([
+        _base_row(
+            UserID="61",
+            Email="weekmatch@example.com",
+            PointsAwarded="30",
+            WeekID="2",
+            MissionChallenge="Week 2 - Prompt Qualification (Easy Difficulty)",
+        )
+    ])
+    reload_submissions(csv_data, session)
+    session.commit()
+
+    linked = session.execute(select(SubmittedActivity)).scalar_one()
+    assert linked.mission_model_id == "prompt-week-2"
+
+
+def test_mission_mapping_requires_week_alignment(session):
+    session.add(
+        Model(id="prompt-week-1", name="Prompt Qualification", data={}, maip_week="1", maip_points=15)
+    )
+    session.commit()
+
+    csv_data = _build_csv([
+        _base_row(
+            UserID="62",
+            Email="weekmismatch@example.com",
+            PointsAwarded="30",
+            WeekID="2",
+            MissionChallenge="Week 2 - Prompt Qualification (Easy)",
+        )
+    ])
+    reload_submissions(csv_data, session)
+    session.commit()
+
+    linked = session.execute(select(SubmittedActivity)).scalar_one()
+    assert linked.mission_model_id is None
+
+
+def test_mission_mapping_handles_challenge_suffix(session):
+    session.add(
+        Model(id="seeds-week-2", name="Week 2 - Seeds of Bias (Hard)", data={}, maip_week="2", maip_points=30)
+    )
+    session.commit()
+
+    csv_data = _build_csv([
+        _base_row(
+            UserID="63",
+            Email="seedbias@example.com",
+            PointsAwarded="30",
+            WeekID="2",
+            MissionChallenge="Mission: Seeds of Bias Challenge (Hard Difficulty)",
+        )
+    ])
+    reload_submissions(csv_data, session)
+    session.commit()
+
+    linked = session.execute(select(SubmittedActivity)).scalar_one()
+    assert linked.mission_model_id == "seeds-week-2"
+
+
 def test_duplicate_user_ids_raise_error(session):
     csv_data = _build_csv([
         _base_row(UserID="1", Email="dup@example.com"),
@@ -225,3 +305,62 @@ def test_duplicate_user_ids_raise_error(session):
 
     assert exc.value.status_code == 400
     assert "dup@example.com" in exc.value.detail
+
+
+def test_campaign_status_missing_credit(session, monkeypatch):
+    csv_data = _build_csv([
+        _base_row(UserID="60", Email="status@example.com", PointsAwarded="25"),
+    ])
+    reload_submissions(csv_data, session)
+    session.commit()
+
+    def fake_status_sources(_session):
+        return (
+            {
+                "status@example.com": {
+                    "intel guardian": CompletionRecord(
+                        display_name="Intel Guardian",
+                        normalized_name="intel guardian",
+                        count=1,
+                    )
+                }
+            },
+            {"status@example.com": []},
+        )
+
+    monkeypatch.setattr(campaign_service, "_prepare_status_sources", fake_status_sources)
+
+    summary = get_campaign_summary(session, week=None, user_filter=None)
+    assert summary.rows
+    assert summary.rows[0].statusIndicators
+    assert summary.rows[0].statusIndicators[0].code == "missing-credit"
+
+
+def test_campaign_status_points_mismatch(session, monkeypatch):
+    csv_data = _build_csv([
+        _base_row(UserID="70", Email="mismatch@example.com", PointsAwarded="30"),
+    ])
+    reload_submissions(csv_data, session)
+    session.commit()
+
+    def fake_status_sources(_session):
+        return (
+            {},
+            {
+                "mismatch@example.com": [
+                    SubmissionRecord(
+                        challenge_name="Intel Guardian",
+                        normalized_name="intel guardian",
+                        points_awarded=30,
+                        expected_points=100,
+                    )
+                ]
+            },
+        )
+
+    monkeypatch.setattr(campaign_service, "_prepare_status_sources", fake_status_sources)
+
+    summary = get_campaign_summary(session, week=None, user_filter=None)
+    assert summary.rows
+    assert summary.rows[0].statusIndicators
+    assert summary.rows[0].statusIndicators[0].code == "points-mismatch"

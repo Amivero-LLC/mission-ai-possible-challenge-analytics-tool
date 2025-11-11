@@ -4,11 +4,23 @@ export interface CampaignUserInfo {
   email: string;
 }
 
+export type StatusSeverity = "info" | "warning" | "error";
+
+export interface StatusIndicator {
+  code: string;
+  label: string;
+  severity: StatusSeverity;
+  message: string;
+  count?: number | null;
+  examples?: string[];
+}
+
 export interface CampaignRow {
   user: CampaignUserInfo;
   pointsByWeek: Record<number, number>;
   totalPoints: number;
   currentRank: number;
+  statusIndicators?: StatusIndicator[];
 }
 
 export interface CampaignSummaryResponse {

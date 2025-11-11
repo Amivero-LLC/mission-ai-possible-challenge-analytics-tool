@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type DragE
 import { fetchCampaignSummary, uploadSubmissions } from '../lib/api';
 import { fetchCurrentUser } from '../lib/auth';
 import { toast } from '../lib/toast';
-import type { CampaignSummaryResponse, SubmissionReloadSummary } from '../types/campaign';
+import type { CampaignSummaryResponse, StatusIndicator, StatusSeverity, SubmissionReloadSummary } from '../types/campaign';
 
 interface CampaignDashboardProps {
   initialSummary: CampaignSummaryResponse;
@@ -27,6 +27,42 @@ const RANK_DETAILS = [
   { number: 1, name: 'Analyst', minPoints: 150, color: 'bg-sky-500' },
   { number: 0, name: 'None', minPoints: 0, color: 'bg-slate-500' },
 ];
+
+const STATUS_ICONS: Record<StatusSeverity, string> = {
+  info: 'ℹ️',
+  warning: '⚠️',
+  error: '⛔',
+};
+
+function renderStatusIndicators(indicators?: StatusIndicator[]) {
+  if (!indicators || indicators.length === 0) {
+    return (
+      <span className="status-pill-wrapper">
+        <span className="status-pill ok">✅</span>
+        <span className="status-tooltip">No issues detected</span>
+      </span>
+    );
+  }
+
+  return indicators.map((indicator) => (
+    <span key={`${indicator.code}-${indicator.count ?? 0}`} className="status-pill-wrapper">
+      <span className={`status-pill ${indicator.severity}`}>
+        {STATUS_ICONS[indicator.severity] ?? 'ℹ️'} {indicator.label}
+      </span>
+      <span className="status-tooltip">
+        {indicator.message}
+        {indicator.count ? ` (${indicator.count})` : ''}
+        {indicator.examples && indicator.examples.length > 0 ? (
+          <ul>
+            {indicator.examples.map((example) => (
+              <li key={example}>{example}</li>
+            ))}
+          </ul>
+        ) : null}
+      </span>
+    </span>
+  ));
+}
 
 interface BannerState {
   type: 'success' | 'error';
@@ -88,6 +124,7 @@ export default function CampaignDashboard({ initialSummary, initialWeek = 'all',
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [canAdminUpload, setCanAdminUpload] = useState(isAdmin);
+  const [lastUploadDisplay, setLastUploadDisplay] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -111,8 +148,26 @@ export default function CampaignDashboard({ initialSummary, initialWeek = 'all',
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
 
+  useEffect(() => {
+    if (!lastUploadAt) {
+      setLastUploadDisplay(null);
+      return;
+    }
+    const formatter = new Intl.DateTimeFormat(undefined, {
+      dateStyle: 'short',
+      timeStyle: 'medium',
+    });
+    setLastUploadDisplay(formatter.format(lastUploadAt));
+  }, [lastUploadAt]);
+
   const visibleWeeks = getVisibleWeeks(summary, selectedWeek);
   const filteredRows = useMemo(() => filterRows(summary.rows, userFilter), [summary.rows, userFilter]);
+  const lastUploadLabel = useMemo(() => {
+    if (!lastUploadAt) {
+      return 'No uploads yet this session';
+    }
+    return lastUploadDisplay ? `Last upload: ${lastUploadDisplay}` : 'Last upload: —';
+  }, [lastUploadAt, lastUploadDisplay]);
 
   const sortedRows = useMemo(() => {
     const rows = [...filteredRows];
@@ -423,7 +478,7 @@ export default function CampaignDashboard({ initialSummary, initialWeek = 'all',
             }}
           >
             <span style={{ fontSize: '0.8rem' }}>⬆</span>
-            {lastUploadAt ? `Last upload: ${lastUploadAt.toLocaleString()}` : 'No uploads yet this session'}
+            {lastUploadLabel}
           </div>
           <p className="muted-text" style={{ marginBottom: '1rem' }}>
             Download the latest CSV from{' '}
@@ -615,9 +670,11 @@ export default function CampaignDashboard({ initialSummary, initialWeek = 'all',
       <section className="section">
         <h2 className="section-title">Campaign Leaderboard</h2>
         <div className="table-wrapper">
-          <table className="data-table">
-            <thead>
-              <tr className="text-left text-xs font-semibold uppercase">
+          <div className="table-scroll">
+            <div className="table-scroll-inner">
+              <table className="data-table">
+              <thead>
+                <tr className="text-left text-xs font-semibold uppercase">
                 <th
                   scope="col"
                   className="cursor-pointer"
@@ -626,6 +683,9 @@ export default function CampaignDashboard({ initialSummary, initialWeek = 'all',
                   title="Click to sort"
                 >
                   User {sortColumn === 'user' && (sortDirection === 'asc' ? '↑' : '↓')}
+                </th>
+                <th scope="col" style={{ width: '10rem' }}>
+                  Status
                 </th>
                 {visibleWeeks.map((week) => (
                   <th
@@ -662,7 +722,7 @@ export default function CampaignDashboard({ initialSummary, initialWeek = 'all',
             <tbody>
               {sortedRows.length === 0 && (
                 <tr>
-                  <td colSpan={visibleWeeks.length + 3} style={{ textAlign: 'center', padding: '2rem', color: '#6b7280' }}>
+                  <td colSpan={visibleWeeks.length + 4} style={{ textAlign: 'center', padding: '2rem', color: '#6b7280' }}>
                     No submissions match the current filters.
                   </td>
                 </tr>
@@ -673,6 +733,7 @@ export default function CampaignDashboard({ initialSummary, initialWeek = 'all',
                     <div style={{ fontWeight: '600', color: '#1f2937' }}>{formatName(row.user)}</div>
                     <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{row.user.email}</div>
                   </td>
+                  <td className="status-cell">{renderStatusIndicators(row.statusIndicators)}</td>
                   {visibleWeeks.map((week) => (
                     <td key={`${row.user.email}-${week}`} style={{ textAlign: 'center', fontWeight: '500' }}>
                       {row.pointsByWeek?.[week] ?? 0}
@@ -685,7 +746,9 @@ export default function CampaignDashboard({ initialSummary, initialWeek = 'all',
                 </tr>
               ))}
             </tbody>
-          </table>
+              </table>
+            </div>
+          </div>
         </div>
       </section>
     </div>

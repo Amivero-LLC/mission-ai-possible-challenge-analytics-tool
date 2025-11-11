@@ -425,34 +425,38 @@ export default function AdminConfigPage() {
 
             <div className="table-wrapper" style={{ marginTop: "1.5rem" }}>
               {adminStatus && adminStatus.recent_runs.length > 0 ? (
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">Resource</th>
-                      <th scope="col">Mode</th>
-                      <th scope="col">Status</th>
-                      <th scope="col">Previous Count</th>
-                      <th scope="col">New Records</th>
-                      <th scope="col">Total Records</th>
-                      <th scope="col">Finished</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {adminStatus.recent_runs.map((run, index) => (
-                      <tr key={`${run.resource}-${run.finished_at ?? index}`}>
-                        <td>{run.resource}</td>
-                        <td>{run.mode}</td>
-                        <td>{run.status}</td>
-                        <td>{typeof run.previous_count === "number" ? formatNumber(run.previous_count) : "—"}</td>
-                        <td>{typeof run.new_records === "number" ? formatNumber(run.new_records) : "—"}</td>
-                        <td>{typeof run.total_records === "number" ? formatNumber(run.total_records) : "—"}</td>
-                        <td suppressHydrationWarning>
-                          {run.finished_at ? formatDateTime(run.finished_at, headerFormatter ?? undefined) : "—"}
-                        </td>
+                <div className="table-scroll">
+                  <div className="table-scroll-inner">
+                    <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Resource</th>
+                        <th scope="col">Mode</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Previous Count</th>
+                        <th scope="col">New Records</th>
+                        <th scope="col">Total Records</th>
+                        <th scope="col">Finished</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {adminStatus.recent_runs.map((run, index) => (
+                        <tr key={`${run.resource}-${run.finished_at ?? index}`}>
+                          <td>{run.resource}</td>
+                          <td>{run.mode}</td>
+                          <td>{run.status}</td>
+                          <td>{typeof run.previous_count === "number" ? formatNumber(run.previous_count) : "—"}</td>
+                          <td>{typeof run.new_records === "number" ? formatNumber(run.new_records) : "—"}</td>
+                          <td>{typeof run.total_records === "number" ? formatNumber(run.total_records) : "—"}</td>
+                          <td suppressHydrationWarning>
+                            {run.finished_at ? formatDateTime(run.finished_at, headerFormatter ?? undefined) : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    </table>
+                  </div>
+                </div>
               ) : (
                 <p className="muted-text">No reload activity recorded yet.</p>
               )}

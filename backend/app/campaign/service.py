@@ -9,6 +9,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from difflib import SequenceMatcher
 from time import perf_counter
 from typing import Iterable, List, Sequence
 from uuid import uuid4
@@ -20,20 +21,31 @@ from sqlalchemy.orm import Session
 
 from ..db import crud
 from ..db.models import Model, Rank, SubmittedActivity, User
+from ..services.dashboard import MissionAnalysisContext, build_mission_analysis_context
 from .schemas import (
     CampaignLeaderboardRow,
     CampaignSummaryResponse,
     CampaignUserInfo,
     SubmissionReloadSummary,
 )
+from .status_rules import (
+    CompletionRecord,
+    SubmissionRecord,
+    UserStatusPayload,
+    evaluate_status_rules,
+)
 
 logger = logging.getLogger(__name__)
 
 REVIEW_STATUS = "review completed"
 MISSION_PREFIX_RE = re.compile(r"^mission:\s*", flags=re.IGNORECASE)
+WEEK_TOKEN_RE = re.compile(r"\bweek\s*\d+\b", flags=re.IGNORECASE)
+DIFFICULTY_WORD_RE = re.compile(r"\b(easy|medium|hard)\b", flags=re.IGNORECASE)
+CHALLENGE_WORD_RE = re.compile(r"\bchallenge(s)?\b", flags=re.IGNORECASE)
 MISSION_DIFFICULTY_RE = re.compile(r"\([^)]*difficulty[^)]*\)\s*$", flags=re.IGNORECASE)
 PUNCTUATION_TABLE = str.maketrans({char: " " for char in string.punctuation})
 WHITESPACE_RE = re.compile(r"\s+")
+CORE_SIMILARITY_THRESHOLD = 0.82
 CAMPAIGN_RESOURCE = "campaign_submissions"
 
 DEFAULT_RANK_ROWS: Sequence[dict] = (
@@ -87,6 +99,14 @@ class _SubmissionRow:
     created: datetime
 
 
+@dataclass(frozen=True)
+class _ModelRecord:
+    model_id: str
+    normalized_name: str | None
+    week: int | None
+    points: int | None
+
+
 def _normalize_mission_name(value: str | None) -> str | None:
 
     if not value:
@@ -95,6 +115,10 @@ def _normalize_mission_name(value: str | None) -> str | None:
     if not text_value:
         return None
     text_value = MISSION_PREFIX_RE.sub("", text_value)
+    text_value = WEEK_TOKEN_RE.sub(" ", text_value)
+    text_value = DIFFICULTY_WORD_RE.sub(" ", text_value)
+    text_value = re.sub(r"difficulty", " ", text_value, flags=re.IGNORECASE)
+    text_value = CHALLENGE_WORD_RE.sub(" ", text_value)
     text_value = MISSION_DIFFICULTY_RE.sub("", text_value)
     text_value = text_value.translate(PUNCTUATION_TABLE)
     text_value = WHITESPACE_RE.sub(" ", text_value)
@@ -249,14 +273,95 @@ def _truncate_submissions(session: Session) -> None:
         session.execute(text("TRUNCATE TABLE submitted_activity_list RESTART IDENTITY CASCADE"))
 
 
-def _build_model_lookup(session: Session) -> dict[str, str]:
-    lookup: dict[str, str] = {}
-    result = session.execute(select(Model.id, Model.name))
-    for model_id, model_name in result:
+def _coerce_model_week(value: str | int | None) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    match = re.search(r"(\d+)", text)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def _build_model_lookup(session: Session) -> tuple[dict[str, _ModelRecord], dict[str, List[_ModelRecord]]]:
+    by_id: dict[str, _ModelRecord] = {}
+    by_name: dict[str, List[_ModelRecord]] = defaultdict(list)
+    result = session.execute(select(Model.id, Model.name, Model.maip_week, Model.maip_points))
+    for model_id, model_name, maip_week, maip_points in result:
         normalized = _normalize_mission_name(model_name) or _normalize_mission_name(model_id)
-        if normalized and normalized not in lookup:
-            lookup[normalized] = model_id
-    return lookup
+        week_value = _coerce_model_week(maip_week)
+        points_value = int(maip_points) if maip_points is not None else None
+        record = _ModelRecord(
+            model_id=model_id,
+            normalized_name=normalized,
+            week=week_value,
+            points=points_value,
+        )
+        by_id[model_id] = record
+        if normalized:
+            by_name[normalized].append(record)
+    return by_id, by_name
+
+
+def _weeks_compatible(model_week: int | None, submission_week: int | None) -> bool:
+    if submission_week is None:
+        return True
+    if model_week is None:
+        return False
+    return model_week == submission_week
+
+
+def _find_model_by_name(
+    normalized_name: str | None,
+    week_id: int | None,
+    models_by_name: dict[str, List[_ModelRecord]],
+) -> _ModelRecord | None:
+    if not normalized_name:
+        return None
+
+    def _first_match(candidates: List[_ModelRecord]) -> _ModelRecord | None:
+        week_matches = [candidate for candidate in candidates if _weeks_compatible(candidate.week, week_id)]
+        return week_matches[0] if week_matches else None
+
+    direct_candidates = models_by_name.get(normalized_name)
+    if direct_candidates:
+        direct_match = _first_match(direct_candidates)
+        if direct_match:
+            return direct_match
+
+    best_candidate: _ModelRecord | None = None
+    best_ratio = 0.0
+    for candidate_name, candidates in models_by_name.items():
+        if candidate_name == normalized_name:
+            continue
+        ratio = SequenceMatcher(None, normalized_name, candidate_name).ratio()
+        if ratio < CORE_SIMILARITY_THRESHOLD or ratio <= best_ratio:
+            continue
+        candidate_match = _first_match(candidates)
+        if candidate_match:
+            best_candidate = candidate_match
+            best_ratio = ratio
+
+    return best_candidate
+
+
+def _match_model_entry(
+    mission_model_id: str | None,
+    normalized_name: str | None,
+    week_id: int | None,
+    models_by_id: dict[str, _ModelRecord],
+    models_by_name: dict[str, List[_ModelRecord]],
+) -> _ModelRecord | None:
+    if mission_model_id:
+        record = models_by_id.get(mission_model_id)
+        if record and _weeks_compatible(record.week, week_id):
+            return record
+    return _find_model_by_name(normalized_name, week_id, models_by_name)
 
 
 def _get_last_upload_timestamp(session: Session) -> str | None:
@@ -425,7 +530,7 @@ def reload_submissions(content: bytes, session: Session) -> SubmissionReloadSumm
 
     _validate_unique_user_ids(rows)
 
-    model_lookup = _build_model_lookup(session)
+    models_by_id, models_by_name = _build_model_lookup(session)
     _truncate_submissions(session)
 
     missions_linked = 0
@@ -435,10 +540,10 @@ def reload_submissions(content: bytes, session: Session) -> SubmissionReloadSumm
         mission_model_id = None
         if row.activity_id == 3:
             normalized_mission = _normalize_mission_name(row.mission_challenge)
-            if normalized_mission:
-                mission_model_id = model_lookup.get(normalized_mission)
-                if mission_model_id:
-                    missions_linked += 1
+            matched_record = _find_model_by_name(normalized_mission, row.week_id, models_by_name)
+            if matched_record:
+                mission_model_id = matched_record.model_id
+                missions_linked += 1
 
         submission_models.append(
             SubmittedActivity(
@@ -523,9 +628,97 @@ def _decimal_to_int(value: Decimal | None) -> int:
     return int(quantized)
 
 
+def _collect_completed_challenges(
+    context: MissionAnalysisContext | None,
+) -> dict[str, dict[str, CompletionRecord]]:
+    completions: dict[str, dict[str, CompletionRecord]] = defaultdict(dict)
+    if context is None:
+        return completions
+
+    analyzer = context.analyzer
+    user_info_map = context.user_info_map
+
+    for user_id, stats in analyzer.user_stats.items():
+        user_details = user_info_map.get(user_id, {})
+        email = (user_details.get("email") or "").strip().lower()
+        if not email:
+            continue
+        per_user = completions[email]
+        for detail in stats.get("missions_completed_details", []):
+            mission_name = detail.get("mission_id")
+            normalized = _normalize_mission_name(mission_name)
+            if not normalized:
+                continue
+            record = per_user.get(normalized)
+            if record:
+                record.count += 1
+            else:
+                per_user[normalized] = CompletionRecord(
+                    display_name=str(mission_name),
+                    normalized_name=normalized,
+                    count=1,
+                )
+
+    return completions
+
+
+def _collect_submission_records(
+    session: Session,
+    models_by_id: dict[str, _ModelRecord],
+    models_by_name: dict[str, List[_ModelRecord]],
+) -> dict[str, list[SubmissionRecord]]:
+    submissions: dict[str, list[SubmissionRecord]] = defaultdict(list)
+    rows = session.execute(
+        select(
+            SubmittedActivity.email,
+            SubmittedActivity.mission_challenge,
+            SubmittedActivity.points_awarded,
+            SubmittedActivity.mission_model_id,
+            SubmittedActivity.week_id,
+        ).where(func.lower(SubmittedActivity.activity_status) == REVIEW_STATUS)
+    ).all()
+
+    for email, mission_challenge, points_awarded, mission_model_id, submission_week in rows:
+        normalized_email = (email or "").strip().lower()
+        if not normalized_email:
+            continue
+        normalized_challenge = _normalize_mission_name(mission_challenge)
+        model_record = _match_model_entry(
+            mission_model_id,
+            normalized_challenge,
+            submission_week,
+            models_by_id,
+            models_by_name,
+        )
+        expected = model_record.points if model_record else None
+
+        submissions[normalized_email].append(
+            SubmissionRecord(
+                challenge_name=mission_challenge or "Unknown Challenge",
+                normalized_name=normalized_challenge,
+                points_awarded=_decimal_to_int(points_awarded),
+                expected_points=expected,
+            )
+        )
+
+    return submissions
+
+
+def _prepare_status_sources(session: Session) -> tuple[
+    dict[str, dict[str, CompletionRecord]],
+    dict[str, list[SubmissionRecord]],
+]:
+    models_by_id, models_by_name = _build_model_lookup(session)
+    analysis_context = build_mission_analysis_context(strict=False)
+    completions = _collect_completed_challenges(analysis_context)
+    submissions = _collect_submission_records(session, models_by_id, models_by_name)
+    return completions, submissions
+
+
 def get_campaign_summary(session: Session, *, week: str | None, user_filter: str | None) -> CampaignSummaryResponse:
     week_filter = _coerce_week_param(week)
     normalized_user = user_filter.strip().lower() if user_filter and user_filter.strip() else None
+    completions_index, submissions_index = _prepare_status_sources(session)
 
     weeks_present_query = session.execute(
         select(SubmittedActivity.week_id).distinct().order_by(SubmittedActivity.week_id)
@@ -607,12 +800,20 @@ def get_campaign_summary(session: Session, *, week: str | None, user_filter: str
             total_points_value = sum(points_by_week.values())
         else:
             total_points_value = points_by_week.get(week_filter, 0)
+        payload = UserStatusPayload(
+            email=info["user"]["email"],
+            normalized_email=key,
+            completions=completions_index.get(key, {}),
+            submissions=submissions_index.get(key, []),
+        )
+        indicators = evaluate_status_rules(payload)
         rows.append(
             CampaignLeaderboardRow(
                 user=CampaignUserInfo(**info["user"]),
                 pointsByWeek=points_by_week,
                 totalPoints=total_points_value,
                 currentRank=user.current_rank if user else 0,
+                statusIndicators=indicators,
             )
         )
 
