@@ -41,22 +41,27 @@ function resolveApiBase(): string {
   );
 }
 
-async function fetchSetupStatus(request: NextRequest): Promise<boolean> {
+async function fetchSetupStatus(request: NextRequest): Promise<boolean | null> {
   try {
     const baseUrl = resolveApiBase();
+    console.log(`[Middleware] Checking setup status at: ${baseUrl}/api/setup/status`);
     const response = await fetch(new URL("/api/setup/status", baseUrl), {
       headers: {
         cookie: request.headers.get("cookie") ?? "",
       },
       cache: "no-store",
+      signal: AbortSignal.timeout(10000), // 10 second timeout for Railway internal networking
     });
     if (!response.ok) {
-      return false;
+      console.error(`[Middleware] Setup status check failed: ${response.status} ${response.statusText}`);
+      return null; // Unable to determine
     }
     const payload = (await response.json()) as { needs_setup?: boolean };
+    console.log(`[Middleware] Setup status response:`, payload);
     return Boolean(payload?.needs_setup);
-  } catch {
-    return false;
+  } catch (error) {
+    console.error("[Middleware] Failed to fetch setup status from backend:", error);
+    return null; // Unable to determine
   }
 }
 
@@ -68,6 +73,16 @@ export async function middleware(request: NextRequest) {
   }
 
   const needsSetup = await fetchSetupStatus(request);
+
+  // If we can't determine setup status (null), allow access to setup and login pages
+  // but redirect home to setup by default for safety
+  if (needsSetup === null) {
+    console.log("[Middleware] Unable to determine setup status, allowing setup and login pages");
+    if (pathname === "/" || (!pathname.startsWith("/setup") && !pathname.startsWith("/auth"))) {
+      return NextResponse.redirect(new URL("/setup", request.url));
+    }
+    return NextResponse.next();
+  }
 
   if (needsSetup) {
     if (!pathname.startsWith("/setup")) {

@@ -199,6 +199,28 @@ API_BASE_URL=https://backend-production-xxxx.up.railway.app
 
 Note: This will count against egress, but it will work.
 
+### Redirecting to Login Instead of Setup
+
+**Symptom**: Fresh deployment with no users redirects to `/auth/login` instead of `/setup`
+
+**Cause**: The frontend middleware cannot reach the backend to check if setup is needed. When the health check times out, older versions assumed setup was complete.
+
+**Solution**:
+1. Check Railway logs for the frontend service to see middleware errors
+2. Verify `API_BASE_URL` is set correctly (try both internal and public URLs)
+3. Ensure backend service is fully started before frontend starts checking
+4. The latest middleware code now handles this gracefully by redirecting to `/setup` when unable to determine status
+
+**Debug Steps**:
+```bash
+# Check frontend logs
+railway logs --service frontend
+
+# Look for these log messages:
+# "[Middleware] Checking setup status at: ..."
+# "[Middleware] Setup status response: ..."
+```
+
 ### Database Connection Issues
 
 **For SQLite (development/testing):**
