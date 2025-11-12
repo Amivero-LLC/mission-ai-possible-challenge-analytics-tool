@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import CampaignPage from "../../components/CampaignPage";
 import { fetchCampaignSummary, resolveBaseUrl } from "../../lib/api";
 import type { AuthUser } from "../../types/auth";
+import type { CampaignSummaryResponse } from "../../types/campaign";
 
 async function fetchIsAdmin(cookieHeader?: string): Promise<boolean> {
   try {
@@ -32,6 +33,8 @@ async function fetchIsAdmin(cookieHeader?: string): Promise<boolean> {
   }
 }
 
+export const dynamic = "force-dynamic";
+
 export default async function Page() {
   const cookieStore = cookies();
   const serializedCookies = cookieStore
@@ -39,10 +42,18 @@ export default async function Page() {
     .map(({ name, value }) => `${name}=${value}`)
     .join("; ");
   const cookieHeader = serializedCookies || undefined;
+
+  const summaryPromise: Promise<CampaignSummaryResponse | null> = fetchCampaignSummary({}, cookieHeader)
+    .then((payload) => payload)
+    .catch((error) => {
+      console.log("[CampaignPage] Failed to fetch campaign summary on server:", error);
+      return null;
+    });
+
   const [summary, isAdmin] = await Promise.all([
-    fetchCampaignSummary({}, cookieHeader),
+    summaryPromise,
     fetchIsAdmin(cookieHeader),
   ]);
 
-  return <CampaignPage initialSummary={summary} initialWeek="all" isAdmin={isAdmin} />;
+  return <CampaignPage initialSummary={summary ?? undefined} initialWeek="all" isAdmin={isAdmin} />;
 }

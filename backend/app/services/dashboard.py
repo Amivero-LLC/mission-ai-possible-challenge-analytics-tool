@@ -283,14 +283,9 @@ def _load_model_metadata(
             logger.debug("Loaded %d models from database cache", len(records))
 
     if not records:
-        remote_records = _fetch_remote_models()
-        if remote_records:
-            persist_models(remote_records, mode="upsert")
-            records = remote_records
-            logger.info("Loaded %d models from OpenWebUI API (fallback)", len(remote_records))
-
-    if not records:
-        logger.warning("No model metadata available after remote and local lookups")
+        logger.warning(
+            "No model metadata available in cache; skip automatic OpenWebUI fetch and wait for manual reload."
+        )
         return {}, set(), {}, {}, {}, {}
 
     metadata = _extract_model_metadata(records)
@@ -445,13 +440,6 @@ def build_mission_analysis_context(
                 data_source = "database"
 
         if not chats_payload:
-            fallback_remote = _fetch_remote_chats()
-            if fallback_remote:
-                chats_payload = fallback_remote
-                persist_chats(chats_payload, mode="upsert")
-                data_source = "api"
-
-        if not chats_payload:
             target_file = data_file or find_latest_export()
             if not target_file:
                 raise HTTPException(
@@ -486,8 +474,6 @@ def build_mission_analysis_context(
         )
 
         user_info_map: Dict[str, dict] = {}
-        remote_users_payload: Optional[Tuple[Dict[str, dict], List[dict]]] = None
-
         if force_refresh:
             remote_users_payload = _fetch_remote_users()
             if remote_users_payload:
@@ -498,13 +484,6 @@ def build_mission_analysis_context(
             stored_users_map, _ = load_users()
             if stored_users_map:
                 user_info_map = stored_users_map
-
-        if not user_info_map:
-            if remote_users_payload is None:
-                remote_users_payload = _fetch_remote_users()
-            if remote_users_payload:
-                user_info_map, raw_users = remote_users_payload
-                persist_users(raw_users, mode="upsert")
 
         user_names_only = {uid: details.get("name", "") for uid, details in user_info_map.items()}
 

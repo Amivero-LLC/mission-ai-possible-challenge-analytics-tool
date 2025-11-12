@@ -6,7 +6,7 @@ import CampaignDashboard from './CampaignDashboard';
 import type { CampaignSummaryResponse } from '../types/campaign';
 
 interface CampaignPageProps {
-  initialSummary: CampaignSummaryResponse;
+  initialSummary?: CampaignSummaryResponse | null;
   initialWeek?: string;
   isAdmin: boolean;
 }
@@ -15,7 +15,7 @@ interface CampaignPageProps {
  * Client wrapper component that connects the Header with CampaignDashboard
  * to enable consistent navigation and layout
  */
-export default function CampaignPage({ initialSummary, initialWeek = 'all', isAdmin }: CampaignPageProps) {
+export default function CampaignPage({ initialSummary = null, initialWeek = 'all', isAdmin }: CampaignPageProps) {
   const [isLoading, setIsLoading] = useState(false);
 
   return (

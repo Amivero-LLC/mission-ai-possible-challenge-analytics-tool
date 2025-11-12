@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type DragEvent, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from 'react';
 
 import { fetchCampaignSummary, uploadSubmissions } from '../lib/api';
 import { fetchCurrentUser } from '../lib/auth';
@@ -8,7 +8,7 @@ import { toast } from '../lib/toast';
 import type { CampaignSummaryResponse, StatusIndicator, StatusSeverity, SubmissionReloadSummary } from '../types/campaign';
 
 interface CampaignDashboardProps {
-  initialSummary: CampaignSummaryResponse;
+  initialSummary?: CampaignSummaryResponse | null;
   initialWeek?: string;
   isAdmin: boolean;
   setHeaderLoading?: (loading: boolean) => void;
@@ -39,6 +39,13 @@ const dashboardTabs: Array<{ id: CampaignTab; label: string }> = [
   { id: 'leaderboard', label: '🏅 Leaderboard' },
   { id: 'activity', label: '📈 Activity Overview' },
 ];
+
+const EMPTY_SUMMARY: CampaignSummaryResponse = {
+  weeks_present: [],
+  rows: [],
+  activity_overview: [],
+  last_upload_at: null,
+};
 
 function renderStatusIndicators(indicators?: StatusIndicator[]) {
   if (!indicators || indicators.length === 0) {
@@ -115,22 +122,24 @@ function filterRows(rows: CampaignSummaryResponse['rows'], query: string) {
   });
 }
 
-export default function CampaignDashboard({ initialSummary, initialWeek = 'all', isAdmin, setHeaderLoading }: CampaignDashboardProps) {
-  const [summary, setSummary] = useState<CampaignSummaryResponse>(initialSummary);
+export default function CampaignDashboard({ initialSummary = null, initialWeek = 'all', isAdmin, setHeaderLoading }: CampaignDashboardProps) {
+  const [summary, setSummary] = useState<CampaignSummaryResponse | null>(initialSummary);
   const [selectedWeek, setSelectedWeek] = useState<string>(initialWeek);
   const [userFilter, setUserFilter] = useState('');
   const [sortColumn, setSortColumn] = useState<SortColumn>('totalPoints');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(!initialSummary);
   const [banner, setBanner] = useState<BannerState | null>(null);
   const [lastReload, setLastReload] = useState<SubmissionReloadSummary | null>(null);
   const [lastUploadAt, setLastUploadAt] = useState<Date | null>(() =>
-    initialSummary.last_upload_at ? new Date(initialSummary.last_upload_at) : null,
+    initialSummary?.last_upload_at ? new Date(initialSummary.last_upload_at) : null,
   );
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [canAdminUpload, setCanAdminUpload] = useState(isAdmin);
   const [lastUploadDisplay, setLastUploadDisplay] = useState<string | null>(null);
+  const resolvedSummary = summary ?? EMPTY_SUMMARY;
+  const initialFetchAttemptedRef = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -167,9 +176,12 @@ export default function CampaignDashboard({ initialSummary, initialWeek = 'all',
     setLastUploadDisplay(formatter.format(lastUploadAt));
   }, [lastUploadAt]);
 
-  const visibleWeeks = getVisibleWeeks(summary, selectedWeek);
-  const activityOverview = summary.activity_overview ?? [];
-  const filteredRows = useMemo(() => filterRows(summary.rows, userFilter), [summary.rows, userFilter]);
+  const visibleWeeks = getVisibleWeeks(resolvedSummary, selectedWeek);
+  const activityOverview = resolvedSummary.activity_overview ?? [];
+  const filteredRows = useMemo(
+    () => filterRows(resolvedSummary.rows, userFilter),
+    [resolvedSummary.rows, userFilter],
+  );
   const lastUploadLabel = useMemo(() => {
     if (!lastUploadAt) {
       return 'No uploads yet this session';
@@ -319,6 +331,14 @@ export default function CampaignDashboard({ initialSummary, initialWeek = 'all',
     setBanner(null);
   }, []);
 
+  useEffect(() => {
+    if (summary || initialFetchAttemptedRef.current) {
+      return;
+    }
+    initialFetchAttemptedRef.current = true;
+    void refreshSummary(initialWeek);
+  }, [initialWeek, refreshSummary, summary]);
+
   const renderRankBadge = (rank: number) => {
     const detail = RANK_DETAILS.find((item) => item.number === rank) ?? RANK_DETAILS[RANK_DETAILS.length - 1];
     return (
@@ -337,10 +357,10 @@ export default function CampaignDashboard({ initialSummary, initialWeek = 'all',
   }, [refreshSummary]);
 
   // Calculate summary statistics
-  const totalUsers = summary.rows.length;
-  const totalPoints = summary.rows.reduce((sum, row) => sum + row.totalPoints, 0);
+  const totalUsers = resolvedSummary.rows.length;
+  const totalPoints = resolvedSummary.rows.reduce((sum, row) => sum + row.totalPoints, 0);
   const avgPoints = totalUsers > 0 ? (totalPoints / totalUsers).toFixed(1) : '0';
-  const activeWeeks = summary.weeks_present.length;
+  const activeWeeks = resolvedSummary.weeks_present.length;
 
   return (
     <div className="dashboard-container" style={{ position: 'relative' }}>
@@ -640,7 +660,7 @@ export default function CampaignDashboard({ initialSummary, initialWeek = 'all',
             disabled={loading}
           >
             <option value="all">All Weeks</option>
-            {summary.weeks_present.map((week) => (
+            {resolvedSummary.weeks_present.map((week) => (
               <option key={week} value={String(week)}>
                 Week {week}
               </option>
