@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { fetchDashboard } from "../lib/api";
-import DashboardPage from "../components/DashboardPage";
+import DashboardWrapper from "../components/DashboardWrapper";
 
 /**
  * Next.js server component that preloads the latest dashboard data.
@@ -10,12 +10,20 @@ import DashboardPage from "../components/DashboardPage";
  *
  * Notes:
  *   - Runs on the server, so `fetchDashboard` uses environment-configured API_BASE_URL.
- *   - Rendering the dashboard on the server improves perceived load times since
- *     the initial payload is embedded in the HTML.
+ *   - For cross-domain deployments, this may fail since cookies are on different domains
+ *   - Client-side auth check will redirect to login if needed
  */
 export default async function HomePage() {
-  const cookieHeader = cookies().toString();
-  const dashboard = await fetchDashboard({}, cookieHeader || undefined);
+  let dashboard = null;
 
-  return <DashboardPage initialData={dashboard} />;
+  try {
+    const cookieHeader = cookies().toString();
+    dashboard = await fetchDashboard({}, cookieHeader || undefined);
+  } catch (error) {
+    // Dashboard fetch failed (expected for cross-domain auth)
+    // Client component will handle auth check and redirect
+    console.log("[HomePage] Failed to fetch dashboard on server:", error);
+  }
+
+  return <DashboardWrapper initialData={dashboard} />;
 }

@@ -25,7 +25,14 @@ export default function SetupPage() {
     try {
       setIsSubmitting(true);
       setError(null);
-      await setupBootstrap({ email, username: username || undefined, password });
+      const tokenPair = await setupBootstrap({ email, username: username || undefined, password });
+
+      // Store access token in localStorage for cross-domain auth
+      if (typeof window !== "undefined") {
+        localStorage.setItem("maip_access_token", tokenPair.access_token);
+        localStorage.setItem("maip_token_expires", String(Date.now() + (tokenPair.expires_in * 1000)));
+      }
+
       router.push("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to complete setup");

@@ -99,15 +99,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (!request.cookies.has(SESSION_COOKIE)) {
-    const loginUrl = new URL("/auth/login", request.url);
-    const redirectTarget = `${pathname}${request.nextUrl.search}`.replace(/\?$/, "");
-    if (redirectTarget && redirectTarget !== "/auth/login") {
-      loginUrl.searchParams.set("redirect", redirectTarget);
-    }
-    return NextResponse.redirect(loginUrl);
-  }
-
+  // For cross-domain auth, we can't rely on cookies in middleware since they're on different domains
+  // Let the pages handle authentication client-side using localStorage tokens
+  // The backend will still validate the session via cookies when making API calls
   return NextResponse.next();
 }
 

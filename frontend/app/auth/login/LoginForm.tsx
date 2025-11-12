@@ -88,8 +88,15 @@ export default function LoginForm({ redirectParam, initialNotice = null }: Login
         if (typeof window !== "undefined") {
           sessionStorage.setItem("maip_post_auth_redirect", redirectTarget || "/");
         }
-        await login({ email, password, remember_me: rememberMe });
-        console.log("[Login] Login successful, redirecting...");
+        const tokenPair = await login({ email, password, remember_me: rememberMe });
+        console.log("[Login] Login successful, storing token and redirecting...");
+
+        // Store access token in localStorage for cross-domain auth
+        if (typeof window !== "undefined") {
+          localStorage.setItem("maip_access_token", tokenPair.access_token);
+          localStorage.setItem("maip_token_expires", String(Date.now() + (tokenPair.expires_in * 1000)));
+        }
+
         const storedTarget =
           (typeof window !== "undefined" ? sessionStorage.getItem("maip_post_auth_redirect") : null) ||
           redirectTarget ||

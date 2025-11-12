@@ -119,6 +119,13 @@ export default function Header({ onExportCSV, onExportExcel, isLoading = false }
     try {
       setIsLoggingOut(true);
       await logout();
+
+      // Clear localStorage tokens (for cross-domain auth)
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('maip_access_token');
+        localStorage.removeItem('maip_token_expires');
+      }
+
       const currentPath = pathname ?? '/';
       const target = searchString ? `${currentPath}?${searchString}` : currentPath;
       const params = new URLSearchParams();
