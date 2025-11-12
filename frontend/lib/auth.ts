@@ -1,4 +1,5 @@
 import { resolveBaseUrl } from "./api";
+import { buildBrowserAuthHeaders } from "./browserAuth";
 import type {
   AdminUserUpdateRequest,
   AuditEntry,
@@ -30,14 +31,16 @@ async function authRequest<TBody = unknown, TResult = unknown>(
 
   let response: Response;
   try {
+    const mergedHeaders: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...buildBrowserAuthHeaders(),
+      ...headers,
+    };
     response = await fetch(url.toString(), {
       method,
       cache,
       credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-        ...headers,
-      },
+      headers: mergedHeaders,
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(30000), // 30 second timeout
     });

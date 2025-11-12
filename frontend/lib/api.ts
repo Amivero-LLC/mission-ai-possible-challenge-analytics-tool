@@ -1,6 +1,7 @@
 import type { DatabaseStatus, ReloadMode, ReloadResource, ReloadRun } from "../types/admin";
 import type { CampaignSummaryResponse, SubmissionReloadSummary } from "../types/campaign";
 import type { DashboardResponse, SortOption } from "../types/dashboard";
+import { buildBrowserAuthHeaders } from "./browserAuth";
 
 /**
  * Supported query parameters for `/dashboard`.
@@ -36,6 +37,16 @@ export function resolveBaseUrl() {
     );
   }
   return process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+}
+
+function composeAuthHeaders(authCookies?: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    ...buildBrowserAuthHeaders(),
+  };
+  if (authCookies) {
+    headers.Cookie = authCookies;
+  }
+  return headers;
 }
 
 /**
@@ -77,10 +88,7 @@ export async function fetchDashboard(
   }
 
   // Disable HTTP caching so the UI always reflects the most recent OpenWebUI snapshot.
-  const headers: Record<string, string> = {};
-  if (authCookies) {
-    headers.Cookie = authCookies;
-  }
+  const headers = composeAuthHeaders(authCookies);
 
   const response = await fetch(url.toString(), {
     cache: "no-store",
@@ -123,10 +131,8 @@ export async function refreshData(authCookies?: string): Promise<{
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...composeAuthHeaders(authCookies),
   };
-  if (authCookies) {
-    headers.Cookie = authCookies;
-  }
 
   const response = await fetch(url.toString(), {
     method: "POST",
@@ -147,10 +153,7 @@ export async function fetchDatabaseStatus(authCookies?: string): Promise<Databas
   const baseUrl = resolveBaseUrl();
   const url = new URL("/admin/db/status", baseUrl);
 
-  const headers: Record<string, string> = {};
-  if (authCookies) {
-    headers.Cookie = authCookies;
-  }
+  const headers = composeAuthHeaders(authCookies);
 
   const response = await fetch(url.toString(), {
     cache: "no-store",
@@ -176,10 +179,8 @@ export async function reloadDatabase(
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...composeAuthHeaders(authCookies),
   };
-  if (authCookies) {
-    headers.Cookie = authCookies;
-  }
 
   const response = await fetch(url.toString(), {
     method: "POST",
@@ -230,10 +231,7 @@ export async function fetchCampaignSummary(
     url.search = queryString;
   }
 
-  const headers: Record<string, string> = {};
-  if (authCookies) {
-    headers.Cookie = authCookies;
-  }
+  const headers = composeAuthHeaders(authCookies);
 
   const response = await fetch(url.toString(), {
     cache: "no-store",
@@ -258,10 +256,7 @@ export async function uploadSubmissions(
   const formData = new FormData();
   formData.append("file", file);
 
-  const headers: Record<string, string> = {};
-  if (authCookies) {
-    headers.Cookie = authCookies;
-  }
+  const headers = composeAuthHeaders(authCookies);
 
   const response = await fetch(url.toString(), {
     method: "POST",
