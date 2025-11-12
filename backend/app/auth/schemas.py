@@ -19,10 +19,19 @@ class BootstrapRequest(BaseModel):
     username: Optional[str] = None
 
 
-class RegisterRequest(BaseModel):
+class RegisterStartRequest(BaseModel):
+    email: EmailStr
+    username: Optional[str] = None
+
+
+class RegisterCompleteRequest(BaseModel):
     email: EmailStr
     password: constr(min_length=12)
-    username: Optional[str] = None
+
+
+class RegisterStartResponse(BaseModel):
+    status: Literal["pending_approval", "password_setup_required", "password_reset_required"]
+    message: str
 
 
 class LoginRequest(BaseModel):

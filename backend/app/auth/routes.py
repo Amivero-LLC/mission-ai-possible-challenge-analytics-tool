@@ -23,7 +23,9 @@ from .schemas import (
     ModeResponse,
     OAuthCallbackRequest,
     OAuthStartResponse,
-    RegisterRequest,
+    RegisterCompleteRequest,
+    RegisterStartRequest,
+    RegisterStartResponse,
     ResetPasswordRequest,
     TokenPair,
     UserSyncRequest,
@@ -33,15 +35,16 @@ from .service import (
     authenticate_local_user,
     bootstrap_required,
     complete_oauth_flow,
+    complete_registration_password,
     create_bootstrap_admin,
     forgot_password,
     issue_tokens,
     list_admin_users,
     list_audit_logs,
     refresh_session,
-    register_local_user,
     revoke_refresh_token,
     start_oauth_flow,
+    start_registration,
     sync_users_from_emails,
     update_admin_user,
     verify_email,
@@ -116,22 +119,21 @@ def get_mode() -> ModeResponse:
     return ModeResponse(auth_mode=get_auth_config().auth_mode)
 
 
-@auth_router.post("/register")
-def register(payload: RegisterRequest, response: Response, db: Session = Depends(get_db)) -> Response:
-    user = register_local_user(db, payload)
-    if not user.is_approved:
-        _clear_session_cookies(response)
-        return JSONResponse(
-            status_code=status.HTTP_202_ACCEPTED,
-            content={
-                "status": "pending_approval",
-                "message": "Registration received. Awaiting administrator approval.",
-            },
-        )
+@auth_router.post("/register/start", response_model=RegisterStartResponse)
+def register_start(payload: RegisterStartRequest, response: Response, db: Session = Depends(get_db)) -> RegisterStartResponse:
+    return start_registration(db, payload)
+
+
+@auth_router.post("/register/complete", response_model=TokenPair)
+def register_complete(payload: RegisterCompleteRequest, response: Response, db: Session = Depends(get_db)) -> TokenPair:
+    user = complete_registration_password(db, payload)
     access, access_exp, refresh, refresh_exp = issue_tokens(db, user)
     _set_session_cookies(response, access, access_exp, refresh, refresh_exp)
-    token_pair = TokenPair(access_token=access, refresh_token=refresh, expires_in=int((access_exp - datetime.now(timezone.utc)).total_seconds()))
-    return JSONResponse(status_code=status.HTTP_200_OK, content=token_pair.model_dump())
+    return TokenPair(
+        access_token=access,
+        refresh_token=refresh,
+        expires_in=int((access_exp - datetime.now(timezone.utc)).total_seconds()),
+    )
 
 
 @auth_router.post("/login", response_model=TokenPair)

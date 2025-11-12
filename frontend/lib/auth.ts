@@ -5,6 +5,7 @@ import type {
   AuthMode,
   AuthUser,
   OAuthStartResponse,
+  RegisterStartResponse,
   TokenPair,
 } from "../types/auth";
 
@@ -109,12 +110,21 @@ export async function login(payload: {
   });
 }
 
-export async function register(payload: {
+export async function startRegistration(payload: {
+  email: string;
+  username?: string;
+}): Promise<RegisterStartResponse> {
+  return authRequest<typeof payload, RegisterStartResponse>("/api/auth/register/start", {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export async function completeRegistration(payload: {
   email: string;
   password: string;
-  username?: string;
 }): Promise<TokenPair> {
-  return authRequest<typeof payload, TokenPair>("/api/auth/register", {
+  return authRequest<typeof payload, TokenPair>("/api/auth/register/complete", {
     method: "POST",
     body: payload,
   });

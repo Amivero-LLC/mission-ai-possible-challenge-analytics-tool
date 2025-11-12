@@ -7,7 +7,6 @@ from typing import Iterable, Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import and_, func, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..db.models import User as AnalyticsUser
@@ -24,7 +23,9 @@ from .schemas import (
     LoginRequest,
     OAuthCallbackRequest,
     OAuthStartResponse,
-    RegisterRequest,
+    RegisterCompleteRequest,
+    RegisterStartRequest,
+    RegisterStartResponse,
     ResetPasswordRequest,
     UserSyncRequest,
 )
@@ -80,7 +81,7 @@ def create_bootstrap_admin(db: Session, payload: BootstrapRequest) -> AuthUser:
     return user
 
 
-def register_local_user(db: Session, payload: RegisterRequest) -> AuthUser:
+def start_registration(db: Session, payload: RegisterStartRequest) -> RegisterStartResponse:
     if bootstrap_required(db):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="System requires initial setup.")
     if get_auth_mode() == AuthMode.OAUTH:
@@ -88,28 +89,75 @@ def register_local_user(db: Session, payload: RegisterRequest) -> AuthUser:
 
     _ensure_email_allowed(db, payload.email)
 
+    email = payload.email.lower()
+    user = db.scalar(select(AuthUser).where(func.lower(AuthUser.email) == email))
+
+    if user:
+        if user.auth_provider != AuthProvider.LOCAL:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account uses single sign-on.")
+
+        if payload.username and not user.username:
+            user.username = payload.username
+            db.flush()
+
+        if user.password_hash:
+            return RegisterStartResponse(
+                status="password_reset_required",
+                message="An account already exists. Use the password reset workflow to regain access.",
+            )
+
+        if user.is_approved:
+            return RegisterStartResponse(
+                status="password_setup_required",
+                message="Your account is approved. Set your password to finish signing up.",
+            )
+
+        return RegisterStartResponse(
+            status="pending_approval",
+            message="Registration already received. Awaiting administrator approval.",
+        )
+
     user = AuthUser(
-        email=payload.email.lower(),
+        email=email,
         username=payload.username,
         auth_provider=AuthProvider.LOCAL,
-        password_hash=hash_password(payload.password),
+        password_hash=None,
         role=AuthRole.ADMIN if get_auth_config().feature_role_user_enabled is False else AuthRole.USER,
         is_approved=False,
         is_active=True,
         email_verified=False,
         source="local",
     )
-    try:
-        db.add(user)
-        db.flush()
-    except IntegrityError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Account already exists.") from None
+    db.add(user)
+    db.flush()
+    _record_audit(db, action="register_start", actor=user, subject=user, details={"provider": "local"})
 
+    return RegisterStartResponse(
+        status="pending_approval",
+        message="Registration submitted. Awaiting administrator approval.",
+    )
+
+
+def complete_registration_password(db: Session, payload: RegisterCompleteRequest) -> AuthUser:
     if bootstrap_required(db):
-        user.is_approved = True
-        user.email_verified = True
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="System requires initial setup.")
+    if get_auth_mode() == AuthMode.OAUTH:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Local registration is disabled.")
 
-    _record_audit(db, action="register", actor=user, subject=user, details={"provider": "local"})
+    email = payload.email.lower()
+    user = db.scalar(select(AuthUser).where(func.lower(AuthUser.email) == email))
+    if not user or user.auth_provider != AuthProvider.LOCAL:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found.")
+    if user.password_hash:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Password already set. Use password reset instead.")
+    if not user.is_approved:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account pending approval.")
+
+    user.password_hash = hash_password(payload.password)
+    user.email_verified = True
+    user.is_active = True
+    db.flush()
+    _record_audit(db, action="register_complete", actor=user, subject=user)
     return user
 
 

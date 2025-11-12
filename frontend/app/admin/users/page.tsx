@@ -78,7 +78,13 @@ export default function AdminUsersPage() {
         label: "User",
         render: (user) => (
           <div className="space-y-0.5">
-            <p className="font-medium text-slate-900 dark:text-slate-50">{user.username ?? "Pending profile"}</p>
+            <p
+              className={`font-semibold ${
+                user.username ? "text-slate-900" : "text-slate-500"
+              }`}
+            >
+              {user.username ?? "Pending profile"}
+            </p>
             <p className="text-xs text-slate-500">{user.email}</p>
           </div>
         ),
@@ -86,7 +92,7 @@ export default function AdminUsersPage() {
       {
         label: "Provider",
         render: (user) => (
-          <span className="rounded-full bg-slate-100 px-2 py-1 text-xs uppercase tracking-wide text-slate-600">
+          <span className="inline-flex items-center rounded-full bg-slate-900/80 px-3 py-0.5 text-xs font-semibold uppercase tracking-wide text-white">
             {user.auth_provider === "o365" ? "Microsoft 365" : "Local"}
           </span>
         ),
@@ -94,20 +100,40 @@ export default function AdminUsersPage() {
       {
         label: "Status",
         render: (user) => (
-          <div className="flex flex-col gap-1 text-xs">
-            <span className={user.is_approved ? "text-emerald-600" : "text-amber-600"}>
+          <div className="flex flex-col gap-1 text-xs font-semibold">
+            <span
+              className={`inline-flex items-center rounded-full px-2.5 py-0.5 ring-1 ring-inset ${
+                user.is_approved
+                  ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+                  : "bg-amber-50 text-amber-700 ring-amber-200"
+              }`}
+            >
               {user.is_approved ? "Approved" : "Awaiting approval"}
             </span>
-            <span className={user.is_active ? "text-emerald-600" : "text-red-600"}>
-              {user.is_active ? "Active" : "Suspended"}
-            </span>
+            {user.is_active ? (
+              user.is_approved ? (
+                user.last_login_at ? (
+                  <span className="inline-flex items-center rounded-full bg-sky-50 px-2.5 py-0.5 text-sky-700 ring-1 ring-inset ring-sky-200">
+                    Active
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-amber-700 ring-1 ring-inset ring-amber-200">
+                    Pending first login
+                  </span>
+                )
+              ) : null
+            ) : (
+              <span className="inline-flex items-center rounded-full bg-rose-50 px-2.5 py-0.5 text-rose-700 ring-1 ring-inset ring-rose-200">
+                Suspended
+              </span>
+            )}
           </div>
         ),
       },
       {
         label: "Role",
         render: (user) => (
-          <span className="rounded-full bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700">
+          <span className="inline-flex items-center rounded-full bg-indigo-600/90 px-3 py-0.5 text-xs font-semibold uppercase tracking-wide text-white">
             {user.role}
           </span>
         ),
@@ -119,14 +145,14 @@ export default function AdminUsersPage() {
             <button
               type="button"
               onClick={() => handleUpdate(user.id, { is_approved: !user.is_approved })}
-              className="rounded-md border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 transition hover:border-indigo-400 hover:text-indigo-600"
+              className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 transition hover:border-indigo-400 hover:bg-indigo-50 hover:text-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
             >
               {user.is_approved ? "Revoke" : "Approve"}
             </button>
             <button
               type="button"
               onClick={() => handleUpdate(user.id, { is_active: !user.is_active })}
-              className="rounded-md border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 transition hover:border-indigo-400 hover:text-indigo-600"
+              className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 transition hover:border-indigo-400 hover:bg-indigo-50 hover:text-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
             >
               {user.is_active ? "Suspend" : "Activate"}
             </button>
@@ -164,9 +190,9 @@ export default function AdminUsersPage() {
           {error ? (
             <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
           ) : null}
-          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <table className="min-w-full divide-y divide-slate-200">
-              <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">
+          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-b from-white to-slate-50 shadow-sm">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="bg-slate-900 text-left text-xs font-semibold uppercase tracking-wide text-slate-100">
                 <tr>
                   {columns.map((column) => (
                     <th key={column.label} className="px-4 py-3">
@@ -175,7 +201,7 @@ export default function AdminUsersPage() {
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 bg-white text-sm text-slate-700">
+              <tbody className="divide-y divide-slate-100 bg-white text-slate-800">
                 {isLoading ? (
                   <tr>
                     <td className="px-4 py-6 text-center text-sm" colSpan={columns.length}>

@@ -30,6 +30,11 @@ export interface OAuthStartResponse {
   state: string;
 }
 
+export interface RegisterStartResponse {
+  status: "pending_approval" | "password_setup_required" | "password_reset_required";
+  message: string;
+}
+
 export interface AdminUserUpdateRequest {
   is_approved?: boolean;
   is_active?: boolean;
