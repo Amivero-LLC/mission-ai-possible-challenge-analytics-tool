@@ -20,7 +20,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from ..db import crud
-from ..db.models import Model, Rank, SubmittedActivity, User
+from ..db.models import Chat, Model, Rank, SubmittedActivity, User
 from ..services.dashboard import MissionAnalysisContext, build_mission_analysis_context
 from .schemas import (
     ActivityOverviewEntry,
@@ -416,6 +416,40 @@ def _generate_user_id(session: Session, sharepoint_id: int | None, email: str) -
     return f"sal-{uuid4()}"
 
 
+def _merge_duplicate_users(session: Session, primary: User, duplicates: list[User]) -> None:
+    duplicate_ids = [user.id for user in duplicates if user.id != primary.id]
+    if not duplicate_ids:
+        return
+    session.execute(update(Chat).where(Chat.user_id.in_(duplicate_ids)).values(user_id=primary.id))
+    for duplicate in duplicates:
+        if duplicate.id == primary.id:
+            continue
+        session.delete(duplicate)
+    session.flush()
+    logger.warning(
+        "Merged %d duplicate user(s) for %s; retained %s and removed %s",
+        len(duplicate_ids),
+        primary.email,
+        primary.id,
+        ", ".join(duplicate_ids),
+    )
+
+
+def _fetch_user_by_email(session: Session, email_lower: str) -> User | None:
+    result = session.execute(
+        select(User)
+        .where(func.lower(User.email) == email_lower)
+        .order_by(User.sharepoint_user_id.is_(None), User.created_at, User.id)
+    )
+    matches = result.scalars().all()
+    if not matches:
+        return None
+    primary, *duplicates = matches
+    if duplicates:
+        _merge_duplicate_users(session, primary, duplicates)
+    return primary
+
+
 def _upsert_users_from_submissions(session: Session, rows: Iterable[_SubmissionRow]) -> tuple[int, int]:
     created = 0
     updated = 0
@@ -426,9 +460,7 @@ def _upsert_users_from_submissions(session: Session, rows: Iterable[_SubmissionR
             cache[key] = row
 
     for email_lower, row in cache.items():
-        existing = session.execute(
-            select(User).where(func.lower(User.email) == email_lower)
-        ).scalar_one_or_none()
+        existing = _fetch_user_by_email(session, email_lower)
         display_name = " ".join(filter(None, [row.first_name, row.last_name])) or None
         if existing is None and row.user_sharepoint_id is not None:
             existing = session.execute(

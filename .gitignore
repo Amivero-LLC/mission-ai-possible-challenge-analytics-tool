@@ -75,3 +75,4 @@ pnpm-debug.log*
 ##########################
 frontend_node_modules/
 *.sqlite
+*.bak_*
