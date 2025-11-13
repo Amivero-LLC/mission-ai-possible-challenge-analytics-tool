@@ -816,8 +816,8 @@ def get_campaign_summary(session: Session, *, week: str | None, user_filter: str
     base_query = (
         select(
             SubmittedActivity.email,
-            SubmittedActivity.first_name,
-            SubmittedActivity.last_name,
+            func.max(SubmittedActivity.first_name).label("first_name"),
+            func.max(SubmittedActivity.last_name).label("last_name"),
             SubmittedActivity.user_sharepoint_id,
             SubmittedActivity.week_id,
             func.sum(SubmittedActivity.points_awarded).label("points"),
@@ -825,8 +825,6 @@ def get_campaign_summary(session: Session, *, week: str | None, user_filter: str
         .where(func.lower(SubmittedActivity.activity_status) == REVIEW_STATUS)
         .group_by(
             SubmittedActivity.email,
-            SubmittedActivity.first_name,
-            SubmittedActivity.last_name,
             SubmittedActivity.user_sharepoint_id,
             SubmittedActivity.week_id,
         )

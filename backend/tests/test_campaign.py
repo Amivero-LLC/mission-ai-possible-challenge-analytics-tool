@@ -242,6 +242,34 @@ def test_activity_overview_groups_by_week_and_activity(session):
     assert list(only_activity.weeks.keys()) == [2]
 
 
+def test_leaderboard_points_ignore_name_variants(session):
+    csv_data = _build_csv([
+        _base_row(
+            UserID="61",
+            Email="variant@example.com",
+            FirstName="Alexandria",
+            LastName="Jungkeit",
+            WeekID="1",
+            PointsAwarded="45",
+        ),
+        _base_row(
+            UserID="61",
+            Email="variant@example.com",
+            FirstName="Alexandria",
+            LastName="Junkeit",
+            WeekID="1",
+            PointsAwarded="20",
+        ),
+    ])
+    reload_submissions(csv_data, session)
+    session.commit()
+
+    summary = get_campaign_summary(session, week=None, user_filter=None)
+    variant_row = next(row for row in summary.rows if row.user.email == "variant@example.com")
+    assert variant_row.pointsByWeek[1] == 65
+    assert variant_row.totalPoints == 65
+
+
 def test_mission_mapping_links_models(session):
     session.add(
         Model(
