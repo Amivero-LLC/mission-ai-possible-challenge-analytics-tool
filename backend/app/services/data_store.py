@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from time import perf_counter
+from threading import Lock
 from typing import Dict, Iterable, List, Tuple
 
 from sqlalchemy import select
@@ -16,6 +17,7 @@ from ..db.models import User as UserModel
 
 
 logger = logging.getLogger(__name__)
+_CHALLENGE_ATTEMPT_LOCK = Lock()
 
 
 def persist_chats(records: Iterable[dict], mode: str = "upsert") -> int:
@@ -211,58 +213,59 @@ def persist_challenge_attempts(records: Iterable[dict], mode: str = "upsert") ->
     if mode_normalized not in {"upsert", "truncate"}:
         raise ValueError("mode must be 'upsert' or 'truncate'")
 
-    try:
-        with get_db_session() as session:
-            previous_count = crud.get_row_count(session, ChallengeAttemptModel)
-            if mode_normalized == "truncate":
-                crud.truncate_table(session, ChallengeAttemptModel)
-            rows = crud.upsert_challenge_attempts(session, records)
-            total_count = crud.get_row_count(session, ChallengeAttemptModel)
-            previous = previous_count or 0
-            if mode_normalized == "truncate":
-                new_records = total_count
-            else:
-                new_records = max(total_count - previous, 0)
+    with _CHALLENGE_ATTEMPT_LOCK:
+        try:
+            with get_db_session() as session:
+                previous_count = crud.get_row_count(session, ChallengeAttemptModel)
+                if mode_normalized == "truncate":
+                    crud.truncate_table(session, ChallengeAttemptModel)
+                rows = crud.upsert_challenge_attempts(session, records)
+                total_count = crud.get_row_count(session, ChallengeAttemptModel)
+                previous = previous_count or 0
+                if mode_normalized == "truncate":
+                    new_records = total_count
+                else:
+                    new_records = max(total_count - previous, 0)
+                duration = perf_counter() - start_time
+                crud.record_reload_log(
+                    session,
+                    resource="challenge_attempts",
+                    mode=mode_normalized,
+                    status="success",
+                    message=None,
+                    rows=rows,
+                    previous_count=previous_count,
+                    new_records=new_records,
+                    total_count=total_count,
+                    duration_seconds=duration,
+                )
+                logger.info(
+                    "Persisted %s challenge attempts in %.2fs (mode=%s, previous=%s, new=%s, total=%s)",
+                    rows,
+                    duration,
+                    mode_normalized,
+                    previous_count,
+                    new_records,
+                    total_count,
+                )
+                return rows
+        except Exception as exc:
             duration = perf_counter() - start_time
-            crud.record_reload_log(
-                session,
-                resource="challenge_attempts",
-                mode=mode_normalized,
-                status="success",
-                message=None,
-                rows=rows,
-                previous_count=previous_count,
-                new_records=new_records,
-                total_count=total_count,
-                duration_seconds=duration,
-            )
-            logger.info(
-                "Persisted %s challenge attempts in %.2fs (mode=%s, previous=%s, new=%s, total=%s)",
-                rows,
-                duration,
-                mode_normalized,
-                previous_count,
-                new_records,
-                total_count,
-            )
-            return rows
-    except Exception as exc:
-        duration = perf_counter() - start_time
-        logger.exception("Failed to persist challenge attempts (mode=%s)", mode_normalized)
-        with get_db_session() as session:
-            crud.record_reload_log(
-                session,
-                resource="challenge_attempts",
-                mode=mode_normalized,
-                status="error",
-                message=str(exc),
-                rows=None,
-                previous_count=previous_count,
-                new_records=None,
-                total_count=None,
-                duration_seconds=duration,
-            )
-        raise
+            logger.exception("Failed to persist challenge attempts (mode=%s)", mode_normalized)
+            with get_db_session() as session:
+                crud.record_reload_log(
+                    session,
+                    resource="challenge_attempts",
+                    mode=mode_normalized,
+                    status="error",
+                    message=str(exc),
+                    rows=None,
+                    previous_count=previous_count,
+                    new_records=None,
+                    total_count=None,
+                    duration_seconds=duration,
+                )
+            raise
 
 
 def load_chats() -> List[dict]:

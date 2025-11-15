@@ -332,7 +332,6 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
 
   // Challenge Attempts sorting state
   type ChallengeAttemptSortKey =
-    | "attempt_number"
     | "mission_week"
     | "user_name"
     | "challenge_name"
@@ -844,15 +843,16 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
           }
           return direction * (aCompleted - bCompleted);
         }
-        default: {
-          const numericKey = attemptSortKey as "attempt_number" | "user_message_count";
-          const aVal = Number(a[numericKey] ?? 0);
-          const bVal = Number(b[numericKey] ?? 0);
+        case "user_message_count": {
+          const aVal = Number(a.user_message_count ?? 0);
+          const bVal = Number(b.user_message_count ?? 0);
           if (aVal === bVal) {
             return compareStrings(a.challenge_name ?? "", b.challenge_name ?? "");
           }
           return direction * (aVal - bVal);
         }
+        default:
+          return 0;
       }
     });
 
@@ -1509,13 +1509,6 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                         <thead>
                           <tr>
                             <th
-                              onClick={() => handleAttemptSort("attempt_number")}
-                              style={{ cursor: "pointer" }}
-                              title="Click to sort"
-                            >
-                              Attempt #{attemptSortKey === "attempt_number" && (attemptSortAsc ? "↑" : "↓")}
-                            </th>
-                            <th
                               onClick={() => handleAttemptSort("mission_week")}
                               style={{ cursor: "pointer" }}
                               title="Click to sort"
@@ -1570,7 +1563,6 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
                         <tbody>
                           {sortedChallengeAttempts().map((attempt) => (
                             <tr key={attempt.attempt_id}>
-                              <td>{attempt.attempt_number}</td>
                               <td>{getWeekDisplay(attempt.mission_week)}</td>
                               <td>
                                 <span className="badge badge-info">{attempt.user_name}</span>

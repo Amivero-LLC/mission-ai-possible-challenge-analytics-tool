@@ -20,7 +20,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from ..db import crud
-from ..db.models import Chat, Model, Rank, SubmittedActivity, User
+from ..db.models import ChallengeAttempt, Chat, Model, Rank, SubmittedActivity, User
 from ..services.dashboard import MissionAnalysisContext, build_mission_analysis_context
 from .schemas import (
     ActivityOverviewEntry,
@@ -421,6 +421,11 @@ def _merge_duplicate_users(session: Session, primary: User, duplicates: list[Use
     if not duplicate_ids:
         return
     session.execute(update(Chat).where(Chat.user_id.in_(duplicate_ids)).values(user_id=primary.id))
+    session.execute(
+        update(ChallengeAttempt)
+        .where(ChallengeAttempt.user_id.in_(duplicate_ids))
+        .values(user_id=primary.id)
+    )
     for duplicate in duplicates:
         if duplicate.id == primary.id:
             continue
