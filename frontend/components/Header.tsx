@@ -31,6 +31,7 @@ export default function Header({ onExportCSV, onExportExcel, isLoading = false }
   const searchString = searchParams.toString();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const isAdminRoute = pathname?.startsWith('/admin') ?? false;
   const canAccessAdmin = user?.role === 'ADMIN' || isAdminRoute;
 
@@ -115,6 +116,10 @@ export default function Header({ onExportCSV, onExportExcel, isLoading = false }
     };
   }, [pathname, router, searchString]);
 
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [pathname]);
+
   async function handleLogout() {
     try {
       setIsLoggingOut(true);
@@ -142,6 +147,15 @@ export default function Header({ onExportCSV, onExportExcel, isLoading = false }
       setIsLoggingOut(false);
     }
   }
+
+  const closeMobileMenu = () => setIsMobileMenuOpen(false);
+  const mobileMenuClassName = [
+    'mobile-menu',
+    isMobileMenuOpen ? 'open' : '',
+    isAdminRoute ? 'mobile-menu--admin' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   return (
     <>
@@ -341,7 +355,13 @@ export default function Header({ onExportCSV, onExportExcel, isLoading = false }
         </nav>
 
         {/* Mobile menu button */}
-        <button className="mobile-menu-btn" aria-label="Toggle menu">
+        <button
+          className="mobile-menu-btn"
+          aria-label="Toggle menu"
+          aria-expanded={isMobileMenuOpen}
+          aria-controls="app-mobile-menu"
+          onClick={() => setIsMobileMenuOpen((prev) => !prev)}
+        >
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <line x1="3" y1="12" x2="21" y2="12"/>
             <line x1="3" y1="6" x2="21" y2="6"/>
@@ -350,6 +370,94 @@ export default function Header({ onExportCSV, onExportExcel, isLoading = false }
         </button>
       </div>
     </header>
+      <div id="app-mobile-menu" className={mobileMenuClassName}>
+        <div className="mobile-menu-section">
+          {primaryNavItems.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`mobile-menu-link${item.isActive ? ' active' : ''}`}
+              onClick={closeMobileMenu}
+            >
+              {item.label}
+            </Link>
+          ))}
+        </div>
+        {canAccessAdmin && (
+          <div className="mobile-menu-section">
+            <p className="mobile-menu-section-title">Admin</p>
+            {adminLinks.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={`mobile-menu-link${link.isActive ? ' active' : ''}`}
+                onClick={closeMobileMenu}
+              >
+                {link.label}
+              </Link>
+            ))}
+          </div>
+        )}
+        {onExportCSV && onExportExcel && (
+          <div className="mobile-menu-section">
+            <p className="mobile-menu-section-title">Exports</p>
+            <button
+              type="button"
+              className="mobile-menu-link mobile-menu-link--button"
+              onClick={() => {
+                onExportCSV();
+                closeMobileMenu();
+              }}
+              disabled={isLoading}
+            >
+              📄 CSV
+            </button>
+            <button
+              type="button"
+              className="mobile-menu-link mobile-menu-link--button"
+              onClick={() => {
+                onExportExcel();
+                closeMobileMenu();
+              }}
+              disabled={isLoading}
+            >
+              📊 Excel
+            </button>
+          </div>
+        )}
+        <div className="mobile-menu-actions">
+          {user ? (
+            <>
+              <div className="mobile-user">
+                <p className={userNameClass}>{user.username ?? user.email}</p>
+                <p className={userRoleClass}>{user.role}</p>
+              </div>
+              <button
+                className="btn btn-outline"
+                type="button"
+                onClick={() => {
+                  closeMobileMenu();
+                  handleLogout();
+                }}
+                disabled={isLoggingOut}
+              >
+                {isLoggingOut ? 'Signing out...' : 'Sign out'}
+              </button>
+            </>
+          ) : (
+            <button
+              className="btn btn-outline"
+              type="button"
+              onClick={() => {
+                closeMobileMenu();
+                router.push('/auth/login');
+              }}
+            >
+              Sign in
+            </button>
+          )}
+        </div>
+      </div>
     </>
   );
 }

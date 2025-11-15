@@ -6,7 +6,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from .models import Chat, Model, ReloadLog, User
+from .models import ChallengeAttempt, Chat, Model, ReloadLog, User
 
 
 def _parse_datetime(value: Optional[str | int | float]) -> Optional[datetime]:
@@ -262,6 +262,41 @@ def upsert_chats(session: Session, records: Iterable[dict]) -> int:
                     **payload,
                 )
             )
+        affected += 1
+
+    return affected
+
+
+def upsert_challenge_attempts(session: Session, records: Iterable[dict]) -> int:
+    """Store per-challenge attempt data for faster analytics queries."""
+    affected = 0
+    for record in records:
+        attempt_id = record.get("id")
+        if not attempt_id:
+            continue
+
+        existing = session.get(ChallengeAttempt, attempt_id)
+
+        sanitized = {
+            "chat_id": record.get("chat_id"),
+            "chat_index": record.get("chat_index") or 0,
+            "user_id": record.get("user_id"),
+            "mission_id": record.get("mission_id"),
+            "mission_model": record.get("mission_model"),
+            "mission_week": record.get("mission_week"),
+            "completed": bool(record.get("completed", False)),
+            "message_count": record.get("message_count") or 0,
+            "user_message_count": record.get("user_message_count") or 0,
+            "started_at": record.get("started_at"),
+            "updated_at_raw": record.get("updated_at_raw"),
+            "payload": record.get("payload") or {},
+        }
+
+        if existing:
+            for field, value in sanitized.items():
+                setattr(existing, field, value)
+        else:
+            session.add(ChallengeAttempt(id=attempt_id, **sanitized))
         affected += 1
 
     return affected

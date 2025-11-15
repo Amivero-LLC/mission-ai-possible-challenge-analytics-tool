@@ -5,9 +5,9 @@ import * as XLSX from "xlsx";
 import { fetchDashboard, reloadDatabase } from "../lib/api";
 import { toast } from "../lib/toast";
 import type { ReloadRun, ReloadResource } from "../types/admin";
-import type { DashboardResponse, SortOption, MissionDetail } from "../types/dashboard";
+import type { DashboardResponse, SortOption, MissionDetail, ChallengeAttemptRecord } from "../types/dashboard";
 
-type TabKey = "overview" | "challengeresults" | "allchats" | "missions";
+type TabKey = "overview" | "challengeresults" | "allattempts" | "missions";
 
 type FilterState = {
   week: string;
@@ -24,7 +24,7 @@ type ChatEntry = DashboardResponse["all_chats"][number];
 const tabs: Array<{ id: TabKey; label: string }> = [
   { id: "overview", label: "📊 Overview" },
   { id: "challengeresults", label: "🏅 Challenge Results" },
-  { id: "allchats", label: "💬 All Chats" },
+  { id: "allattempts", label: "🧪 All Attempts" },
   { id: "missions", label: "🎯 Missions" },
 ];
 
@@ -330,10 +330,18 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
   const [leaderboardSortKey, setLeaderboardSortKey] = useState<LeaderboardSortKey>("completions");
   const [leaderboardSortAsc, setLeaderboardSortAsc] = useState(false);
 
-  // All Chats sorting state
-  type AllChatsSortKey = "num" | "week" | "user_name" | "challenge_name" | "created_at" | "message_count" | "completed";
-  const [allChatsSortKey, setAllChatsSortKey] = useState<AllChatsSortKey>("created_at");
-  const [allChatsSortAsc, setAllChatsSortAsc] = useState(false);
+  // Challenge Attempts sorting state
+  type ChallengeAttemptSortKey =
+    | "attempt_number"
+    | "mission_week"
+    | "user_name"
+    | "challenge_name"
+    | "started_at"
+    | "updated_at"
+    | "user_message_count"
+    | "completed";
+  const [attemptSortKey, setAttemptSortKey] = useState<ChallengeAttemptSortKey>("started_at");
+  const [attemptSortAsc, setAttemptSortAsc] = useState(false);
 
   const handleFiltersChange = (key: keyof FilterState, value: string) => {
     setFilters((prev) => {
@@ -760,17 +768,17 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
   };
 
   /**
-   * Sort all chats based on the current sort key and direction
+   * Sort challenge attempts based on the current sort key and direction
    */
-  const sortedAllChats = useCallback(() => {
-    if (!dashboard.all_chats || dashboard.all_chats.length === 0) {
+  const sortedChallengeAttempts = useCallback(() => {
+    if (!dashboard.challenge_attempts || dashboard.challenge_attempts.length === 0) {
       return [];
     }
 
-    const chats = [...dashboard.all_chats];
-    const direction = allChatsSortAsc ? 1 : -1;
+    const attempts = [...dashboard.challenge_attempts];
+    const direction = attemptSortAsc ? 1 : -1;
 
-    const normalizeTimestamp = (value: ChatEntry["created_at"]) => {
+    const normalizeTimestamp = (value: ChallengeAttemptRecord["started_at"]) => {
       if (value === null || value === undefined || value === "") {
         return direction === 1 ? Number.MAX_SAFE_INTEGER : Number.MIN_SAFE_INTEGER;
       }
@@ -788,36 +796,43 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
       return date.getTime();
     };
 
-    chats.sort((a, b) => {
-      switch (allChatsSortKey) {
-        case "week": {
-          const parseWeek = (value: typeof a.week) => {
-            if (value === null || value === undefined || value === "") {
-              return null;
-            }
-            const numericWeek = Number(value);
-            return Number.isNaN(numericWeek) ? null : numericWeek;
-          };
-          const aWeek = parseWeek(a.week);
-          const bWeek = parseWeek(b.week);
+    const parseWeek = (value: ChallengeAttemptRecord["mission_week"]) => {
+      if (value === null || value === undefined || value === "") {
+        return null;
+      }
+      const numericWeek = Number(value);
+      return Number.isNaN(numericWeek) ? null : numericWeek;
+    };
+
+    const compareStrings = (aVal: string, bVal: string) => {
+      const aStr = aVal.toLowerCase();
+      const bStr = bVal.toLowerCase();
+      if (!aStr && !bStr) return 0;
+      if (!aStr) return 1;
+      if (!bStr) return -1;
+      return attemptSortAsc ? aStr.localeCompare(bStr) : bStr.localeCompare(aStr);
+    };
+
+    attempts.sort((a, b) => {
+      switch (attemptSortKey) {
+        case "mission_week": {
+          const aWeek = parseWeek(a.mission_week);
+          const bWeek = parseWeek(b.mission_week);
           if (aWeek === null && bWeek === null) return 0;
           if (aWeek === null) return 1;
           if (bWeek === null) return -1;
-          return allChatsSortAsc ? aWeek - bWeek : bWeek - aWeek;
+          return attemptSortAsc ? aWeek - bWeek : bWeek - aWeek;
         }
-        case "challenge_name": {
-          const aName = (a.challenge_name ?? "").toString().toLowerCase();
-          const bName = (b.challenge_name ?? "").toString().toLowerCase();
-          if (!aName && !bName) return 0;
-          if (!aName) return 1;
-          if (!bName) return -1;
-          return allChatsSortAsc ? aName.localeCompare(bName) : bName.localeCompare(aName);
-        }
-        case "created_at": {
-          const aTime = normalizeTimestamp(a.created_at);
-          const bTime = normalizeTimestamp(b.created_at);
+        case "challenge_name":
+          return compareStrings(a.challenge_name ?? "", b.challenge_name ?? "");
+        case "user_name":
+          return compareStrings(a.user_name ?? "", b.user_name ?? "");
+        case "started_at":
+        case "updated_at": {
+          const aTime = normalizeTimestamp(a[attemptSortKey]);
+          const bTime = normalizeTimestamp(b[attemptSortKey]);
           if (aTime === bTime) {
-            return direction * (a.num - b.num);
+            return direction * ((a.attempt_number || 0) - (b.attempt_number || 0));
           }
           return direction * (aTime - bTime);
         }
@@ -825,52 +840,56 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
           const aCompleted = a.completed ? 1 : 0;
           const bCompleted = b.completed ? 1 : 0;
           if (aCompleted === bCompleted) {
-            // Fall back to mission flag so completed missions sort ahead of regular chats.
-            if (a.is_mission !== b.is_mission) {
-              return direction * (a.is_mission ? -1 : 1);
-            }
-            return direction * (a.num - b.num);
+            return direction * ((a.attempt_number || 0) - (b.attempt_number || 0));
           }
           return direction * (aCompleted - bCompleted);
         }
         default: {
-          let aVal: unknown = (a as unknown as Record<string, unknown>)[allChatsSortKey];
-          let bVal: unknown = (b as unknown as Record<string, unknown>)[allChatsSortKey];
-
-          if (aVal === null || aVal === undefined) aVal = "";
-          if (bVal === null || bVal === undefined) bVal = "";
-
-          if (typeof aVal === "string" || typeof bVal === "string") {
-            const aStr = String(aVal).toLowerCase();
-            const bStr = String(bVal).toLowerCase();
-            if (!aStr && !bStr) return 0;
-            if (!aStr) return 1;
-            if (!bStr) return -1;
-            return allChatsSortAsc ? aStr.localeCompare(bStr) : bStr.localeCompare(aStr);
+          const numericKey = attemptSortKey as "attempt_number" | "user_message_count";
+          const aVal = Number(a[numericKey] ?? 0);
+          const bVal = Number(b[numericKey] ?? 0);
+          if (aVal === bVal) {
+            return compareStrings(a.challenge_name ?? "", b.challenge_name ?? "");
           }
-
-          const aNum = Number(aVal) || 0;
-          const bNum = Number(bVal) || 0;
-          return direction * (aNum - bNum);
+          return direction * (aVal - bVal);
         }
       }
     });
 
-    return chats;
-  }, [dashboard.all_chats, allChatsSortKey, allChatsSortAsc]);
+    return attempts;
+  }, [dashboard.challenge_attempts, attemptSortKey, attemptSortAsc]);
 
   /**
-   * Handle column header click for all chats sorting
+   * Handle column header click for challenge attempts sorting
    */
-  const handleAllChatsSort = (key: AllChatsSortKey) => {
-    if (allChatsSortKey === key) {
+  const handleAttemptSort = (key: ChallengeAttemptSortKey) => {
+    if (attemptSortKey === key) {
       // Toggle direction if clicking the same column
-      setAllChatsSortAsc(!allChatsSortAsc);
+      setAttemptSortAsc(!attemptSortAsc);
     } else {
       // Set new sort key and default to ascending
-      setAllChatsSortKey(key);
-      setAllChatsSortAsc(true);
+      setAttemptSortKey(key);
+      setAttemptSortAsc(true);
     }
+  };
+
+  const chatLookupByAttemptId = useMemo(() => {
+    const lookup = new Map<string, ChatEntry>();
+    dashboard.all_chats.forEach((chat) => {
+      if (chat.attempt_id) {
+        lookup.set(chat.attempt_id, chat);
+      }
+    });
+    return lookup;
+  }, [dashboard.all_chats]);
+
+  const handleViewAttempt = (attempt: ChallengeAttemptRecord) => {
+    const chat = chatLookupByAttemptId.get(attempt.attempt_id);
+    if (!chat) {
+      toast.error("Chat transcript unavailable for this attempt.");
+      return;
+    }
+    openChatModal(chat);
   };
 
   const openChatModal = (chat: ChatEntry) => {
@@ -881,12 +900,14 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
     setSelectedChat(null);
   };
 
-  const getWeekDisplay = (week: ChatEntry["week"]) => {
+  const getWeekDisplay = (week: ChatEntry["week"] | ChallengeAttemptRecord["mission_week"]) => {
     if (week === null || week === undefined || week === "") {
       return "—";
     }
     return week;
   };
+
+  const getAttemptStatusLabel = (completed: boolean) => (completed ? "Completed" : "Attempted");
 
   /**
    * Get status badge class name
@@ -1474,104 +1495,122 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
           </div>
         )}
 
-        {activeTab === "allchats" && (
+        {activeTab === "allattempts" && (
           <div className="tab-section">
             <section className="section">
-              <h2 className="section-title">💬 All Chats</h2>
-              <div className="table-wrapper">
-                <div className="table-scroll">
-                  <div className="table-scroll-inner">
-                    <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th
-                        onClick={() => handleAllChatsSort("num")}
-                        style={{ cursor: "pointer" }}
-                        title="Click to sort"
-                      >
-                        # {allChatsSortKey === "num" && (allChatsSortAsc ? "↑" : "↓")}
-                      </th>
-                      <th
-                        onClick={() => handleAllChatsSort("week")}
-                        style={{ cursor: "pointer" }}
-                        title="Click to sort"
-                      >
-                        Week {allChatsSortKey === "week" && (allChatsSortAsc ? "↑" : "↓")}
-                      </th>
-                      <th
-                        onClick={() => handleAllChatsSort("user_name")}
-                        style={{ cursor: "pointer" }}
-                        title="Click to sort"
-                      >
-                        User {allChatsSortKey === "user_name" && (allChatsSortAsc ? "↑" : "↓")}
-                      </th>
-                      <th
-                        onClick={() => handleAllChatsSort("challenge_name")}
-                        style={{ cursor: "pointer" }}
-                        title="Click to sort"
-                      >
-                        Challenge {allChatsSortKey === "challenge_name" && (allChatsSortAsc ? "↑" : "↓")}
-                      </th>
-                      <th
-                        onClick={() => handleAllChatsSort("created_at")}
-                        style={{ cursor: "pointer" }}
-                        title="Click to sort"
-                      >
-                        Start Date {allChatsSortKey === "created_at" && (allChatsSortAsc ? "↑" : "↓")}
-                      </th>
-                      <th
-                        onClick={() => handleAllChatsSort("message_count")}
-                        style={{ cursor: "pointer" }}
-                        title="Click to sort"
-                      >
-                        Messages {allChatsSortKey === "message_count" && (allChatsSortAsc ? "↑" : "↓")}
-                      </th>
-                      <th
-                        onClick={() => handleAllChatsSort("completed")}
-                        style={{ cursor: "pointer" }}
-                        title="Click to sort"
-                      >
-                        Result {allChatsSortKey === "completed" && (allChatsSortAsc ? "↑" : "↓")}
-                      </th>
-                      <th>Chat</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sortedAllChats().map((chat) => (
-                      <tr key={chat.num}>
-                        <td>{chat.num}</td>
-                        <td>{getWeekDisplay(chat.week)}</td>
-                        <td>
-                          <span className="badge badge-info">{chat.user_name}</span>
-                        </td>
-                        <td>{chat.challenge_name || (chat.is_mission ? chat.model : "—")}</td>
-                        <td suppressHydrationWarning>{formatChatTimestamp(chat.created_at, chatFormatter ?? undefined)}</td>
-                        <td>{formatNumber(chat.message_count)}</td>
-                        <td>
-                          {chat.is_mission ? (
-                            <span title={chat.completed ? "Completed" : "Not completed"}>
-                              {chat.completed ? "✅" : "❌"}
-                            </span>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td>
-                          <button
-                            type="button"
-                            className="btn chat-open-btn"
-                            onClick={() => openChatModal(chat)}
-                          >
-                            View
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                    </table>
+              <h2 className="section-title">🧪 All Attempts</h2>
+              {dashboard.challenge_attempts.length === 0 ? (
+                <p className="muted-text">No challenge attempts have been recorded yet.</p>
+              ) : (
+                <div className="table-wrapper">
+                  <div className="table-scroll">
+                    <div className="table-scroll-inner">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th
+                              onClick={() => handleAttemptSort("attempt_number")}
+                              style={{ cursor: "pointer" }}
+                              title="Click to sort"
+                            >
+                              Attempt #{attemptSortKey === "attempt_number" && (attemptSortAsc ? "↑" : "↓")}
+                            </th>
+                            <th
+                              onClick={() => handleAttemptSort("mission_week")}
+                              style={{ cursor: "pointer" }}
+                              title="Click to sort"
+                            >
+                              Week {attemptSortKey === "mission_week" && (attemptSortAsc ? "↑" : "↓")}
+                            </th>
+                            <th
+                              onClick={() => handleAttemptSort("user_name")}
+                              style={{ cursor: "pointer" }}
+                              title="Click to sort"
+                            >
+                              User {attemptSortKey === "user_name" && (attemptSortAsc ? "↑" : "↓")}
+                            </th>
+                            <th
+                              onClick={() => handleAttemptSort("challenge_name")}
+                              style={{ cursor: "pointer" }}
+                              title="Click to sort"
+                            >
+                              Challenge {attemptSortKey === "challenge_name" && (attemptSortAsc ? "↑" : "↓")}
+                            </th>
+                            <th
+                              onClick={() => handleAttemptSort("completed")}
+                              style={{ cursor: "pointer" }}
+                              title="Click to sort"
+                            >
+                              Status {attemptSortKey === "completed" && (attemptSortAsc ? "↑" : "↓")}
+                            </th>
+                            <th
+                              onClick={() => handleAttemptSort("started_at")}
+                              style={{ cursor: "pointer" }}
+                              title="Click to sort"
+                            >
+                              Started {attemptSortKey === "started_at" && (attemptSortAsc ? "↑" : "↓")}
+                            </th>
+                            <th
+                              onClick={() => handleAttemptSort("updated_at")}
+                              style={{ cursor: "pointer" }}
+                              title="Click to sort"
+                            >
+                              Updated {attemptSortKey === "updated_at" && (attemptSortAsc ? "↑" : "↓")}
+                            </th>
+                            <th
+                              onClick={() => handleAttemptSort("user_message_count")}
+                              style={{ cursor: "pointer" }}
+                              title="Click to sort"
+                            >
+                              User Messages {attemptSortKey === "user_message_count" && (attemptSortAsc ? "↑" : "↓")}
+                            </th>
+                            <th>Chat</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sortedChallengeAttempts().map((attempt) => (
+                            <tr key={attempt.attempt_id}>
+                              <td>{attempt.attempt_number}</td>
+                              <td>{getWeekDisplay(attempt.mission_week)}</td>
+                              <td>
+                                <span className="badge badge-info">{attempt.user_name}</span>
+                              </td>
+                              <td>{attempt.challenge_name}</td>
+                              <td>
+                                <span className={getStatusBadgeClass(getAttemptStatusLabel(attempt.completed))}>
+                                  {getAttemptStatusLabel(attempt.completed)}
+                                </span>
+                              </td>
+                              <td suppressHydrationWarning>
+                                {formatChallengeTimestamp(attempt.started_at, challengeFormatter ?? undefined)}
+                              </td>
+                              <td suppressHydrationWarning>
+                                {formatChallengeTimestamp(attempt.updated_at, challengeFormatter ?? undefined)}
+                              </td>
+                              <td>{formatNumber(attempt.user_message_count)}</td>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="btn chat-open-btn"
+                                  onClick={() => handleViewAttempt(attempt)}
+                                  disabled={!chatLookupByAttemptId.has(attempt.attempt_id)}
+                                  title={
+                                    chatLookupByAttemptId.has(attempt.attempt_id)
+                                      ? "View chat transcript"
+                                      : "Chat transcript not available"
+                                  }
+                                >
+                                  View
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
             </section>
           </div>
         )}

@@ -75,6 +75,28 @@ class Chat(Base):
     user: Mapped[Optional["User"]] = relationship("User", back_populates="chats")
 
 
+class ChallengeAttempt(Base):
+    __tablename__ = "challenge_attempts"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    chat_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    chat_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    user_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("users.id"), nullable=True, index=True)
+    mission_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    mission_model: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    mission_week: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    completed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    user_message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    started_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    updated_at_raw: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[Optional[str]] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[Optional[str]] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class SubmittedActivity(Base):
     __tablename__ = "submitted_activity_list"
     __table_args__ = (

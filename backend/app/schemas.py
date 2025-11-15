@@ -93,7 +93,25 @@ class ChatPreview(BaseModel):
     completed: bool
     week: Optional[Union[int, str]] = None
     challenge_name: Optional[str] = None
+    attempt_id: Optional[str] = None
     messages: List[ChatMessage] = Field(default_factory=list)
+
+
+class ChallengeAttemptRecord(BaseModel):
+    attempt_id: str
+    attempt_number: int = Field(..., ge=1)
+    chat_id: Optional[str] = None
+    chat_title: Optional[str] = None
+    user_id: str
+    user_name: str
+    challenge_name: str
+    mission_model: Optional[str] = None
+    mission_week: Optional[Union[str, int]] = None
+    completed: bool
+    message_count: int = Field(..., ge=0)
+    user_message_count: int = Field(..., ge=0)
+    started_at: Optional[Union[str, int, float]] = None
+    updated_at: Optional[Union[str, int, float]] = None
 
 
 class ChallengeResultEntry(BaseModel):
@@ -131,6 +149,7 @@ class DashboardResponse(BaseModel):
     all_chats: List[ChatPreview] = Field(default_factory=list)
     challenge_results: List[ChallengeResultEntry] = Field(default_factory=list)
     export_data: List[UserChallengeExportRow] = Field(default_factory=list)
+    challenge_attempts: List["ChallengeAttemptRecord"] = Field(default_factory=list)
 
 
 class ChallengeAttempt(BaseModel):

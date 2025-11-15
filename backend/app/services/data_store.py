@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from ..db import crud
 from ..db import get_db_session
+from ..db.models import ChallengeAttempt as ChallengeAttemptModel
 from ..db.models import Chat as ChatModel
 from ..db.models import Model as ModelModel
 from ..db.models import ReloadLog
@@ -203,11 +204,117 @@ def persist_models(records: Iterable[dict], mode: str = "upsert") -> int:
         raise
 
 
+def persist_challenge_attempts(records: Iterable[dict], mode: str = "upsert") -> int:
+    start_time = perf_counter()
+    previous_count = None
+    mode_normalized = mode.lower()
+    if mode_normalized not in {"upsert", "truncate"}:
+        raise ValueError("mode must be 'upsert' or 'truncate'")
+
+    try:
+        with get_db_session() as session:
+            previous_count = crud.get_row_count(session, ChallengeAttemptModel)
+            if mode_normalized == "truncate":
+                crud.truncate_table(session, ChallengeAttemptModel)
+            rows = crud.upsert_challenge_attempts(session, records)
+            total_count = crud.get_row_count(session, ChallengeAttemptModel)
+            previous = previous_count or 0
+            if mode_normalized == "truncate":
+                new_records = total_count
+            else:
+                new_records = max(total_count - previous, 0)
+            duration = perf_counter() - start_time
+            crud.record_reload_log(
+                session,
+                resource="challenge_attempts",
+                mode=mode_normalized,
+                status="success",
+                message=None,
+                rows=rows,
+                previous_count=previous_count,
+                new_records=new_records,
+                total_count=total_count,
+                duration_seconds=duration,
+            )
+            logger.info(
+                "Persisted %s challenge attempts in %.2fs (mode=%s, previous=%s, new=%s, total=%s)",
+                rows,
+                duration,
+                mode_normalized,
+                previous_count,
+                new_records,
+                total_count,
+            )
+            return rows
+    except Exception as exc:
+        duration = perf_counter() - start_time
+        logger.exception("Failed to persist challenge attempts (mode=%s)", mode_normalized)
+        with get_db_session() as session:
+            crud.record_reload_log(
+                session,
+                resource="challenge_attempts",
+                mode=mode_normalized,
+                status="error",
+                message=str(exc),
+                rows=None,
+                previous_count=previous_count,
+                new_records=None,
+                total_count=None,
+                duration_seconds=duration,
+            )
+        raise
+
+
 def load_chats() -> List[dict]:
     with get_db_session() as session:
         rows = session.execute(select(ChatModel.data)).scalars().all()
     logger.debug("Loaded %d chats from database", len(rows))
     return list(rows)
+
+
+def load_challenge_attempts() -> List[dict]:
+    with get_db_session() as session:
+        rows = (
+            session.execute(
+                select(ChallengeAttemptModel).order_by(
+                    ChallengeAttemptModel.chat_index, ChallengeAttemptModel.id
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    attempts: List[dict] = []
+    for row in rows:
+        payload = {}
+        if isinstance(row.payload, dict):
+            payload = dict(row.payload)
+        else:
+            payload = {}
+
+        payload.setdefault("attempt_id", row.id)
+        payload.setdefault("chat_num", row.chat_index)
+        payload.setdefault("chat_id", row.chat_id or row.id)
+        payload.setdefault("user_id", row.user_id)
+        payload.setdefault("model", payload.get("model") or row.mission_model)
+        payload.setdefault("completed", bool(row.completed))
+        payload.setdefault("message_count", payload.get("message_count") or row.message_count or 0)
+        payload.setdefault("user_message_count", payload.get("user_message_count") or row.user_message_count or 0)
+        payload.setdefault("created_at", payload.get("created_at") or row.started_at)
+        payload.setdefault("updated_at", payload.get("updated_at") or row.updated_at_raw)
+
+        mission_info = payload.get("mission_info")
+        if not isinstance(mission_info, dict):
+            mission_info = {}
+            payload["mission_info"] = mission_info
+        mission_info.setdefault("mission_id", row.mission_id)
+        if row.mission_week is not None:
+            mission_info.setdefault("week", row.mission_week)
+
+        attempts.append(payload)
+
+    logger.debug("Loaded %d challenge attempt payloads from database", len(attempts))
+    return attempts
 
 
 def load_users() -> Tuple[Dict[str, dict], Dict[str, dict]]:
@@ -259,6 +366,7 @@ def get_row_counts() -> Dict[str, int]:
             "users": crud.get_row_count(session, UserModel),
             "chats": crud.get_row_count(session, ChatModel),
             "models": crud.get_row_count(session, ModelModel),
+            "challenge_attempts": crud.get_row_count(session, ChallengeAttemptModel),
         }
     logger.debug("Row counts: %s", counts)
     return counts

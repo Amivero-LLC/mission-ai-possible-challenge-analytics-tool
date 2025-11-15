@@ -16,9 +16,11 @@ from fastapi import HTTPException
 from .data_store import (
     get_latest_status,
     record_custom_reload,
+    load_challenge_attempts,
     load_chats,
     load_models,
     load_users,
+    persist_challenge_attempts,
     persist_chats,
     persist_models,
     persist_users,
@@ -34,6 +36,7 @@ from .mission_analyzer import DATA_DIR, MissionAnalyzer, find_latest_export  # n
 
 from ..schemas import (
     ChallengeAttempt,
+    ChallengeAttemptRecord,
     ChallengeResultEntry,
     ChallengesResponse,
     ChallengeWithUsers,
@@ -388,6 +391,131 @@ def _filter_chats_by_mission_models(chats: List[dict], mission_model_aliases: Se
     return filtered_chats
 
 
+def _build_challenge_attempt_records(attempt_payloads: List[dict]) -> List[dict]:
+    """
+    Normalize MissionAnalyzer payloads so they can be persisted in SQLite.
+    """
+    records: List[dict] = []
+    for payload in attempt_payloads:
+        attempt_id = payload.get("attempt_id")
+        if not attempt_id:
+            continue
+        mission_info = payload.get("mission_info") or {}
+        week_val = mission_info.get("week")
+        sanitized_payload = json.loads(json.dumps(payload))
+        records.append(
+            {
+                "id": attempt_id,
+                "chat_id": payload.get("chat_id"),
+                "chat_index": payload.get("chat_num") or 0,
+                "user_id": payload.get("user_id"),
+                "mission_id": mission_info.get("mission_id"),
+                "mission_model": payload.get("model"),
+                "mission_week": str(week_val) if week_val is not None else None,
+                "completed": bool(payload.get("completed")),
+                "message_count": payload.get("message_count") or 0,
+                "user_message_count": payload.get("user_message_count") or 0,
+                "started_at": payload.get("created_at"),
+                "updated_at_raw": payload.get("updated_at"),
+                "payload": sanitized_payload,
+            }
+        )
+    return records
+
+
+def _rebuild_challenge_attempts_from_chats(
+    chats_payload: List[dict],
+    *,
+    model_lookup: Dict[str, str],
+    mission_model_aliases: Set[str],
+    alias_to_primary: Dict[str, str],
+    week_mapping: Dict[str, str],
+    points_mapping: Dict[str, int],
+    difficulty_mapping: Dict[str, str],
+    persist_mode: str = "truncate",
+) -> List[dict]:
+    """
+    Recompute challenge attempts from raw chat exports and persist them.
+    """
+    if not chats_payload or not mission_model_aliases:
+        persist_challenge_attempts([], mode=persist_mode)
+        return []
+
+    filtered_chats = _filter_chats_by_mission_models(chats_payload, mission_model_aliases)
+    analyzer = MissionAnalyzer(
+        json_file=None,
+        data=filtered_chats,
+        user_names_file=None,
+        user_names={},
+        model_lookup=model_lookup,
+        mission_model_aliases=mission_model_aliases,
+        model_alias_to_primary=alias_to_primary,
+        week_mapping=week_mapping,
+        points_mapping=points_mapping,
+        difficulty_mapping=difficulty_mapping,
+        verbose=False,
+    )
+    analyzer.analyze_missions()
+    attempt_payloads = analyzer.export_challenge_attempts()
+
+    records = _build_challenge_attempt_records(attempt_payloads)
+    persist_challenge_attempts(records, mode=persist_mode)
+    logger.info("Persisted %d challenge attempts (mode=%s)", len(records), persist_mode)
+    return attempt_payloads
+
+
+def _persist_chats_and_rebuild_attempts(chats_payload: List[dict], mode: str = "upsert") -> int:
+    """
+    Persist chat payloads and refresh the cached challenge attempts table.
+    """
+    rows = persist_chats(chats_payload, mode=mode)
+    metadata = _load_model_metadata()
+    if metadata:
+        model_lookup, mission_model_aliases, alias_to_primary, week_mapping, points_mapping, difficulty_mapping = metadata
+        _rebuild_challenge_attempts_from_chats(
+            chats_payload,
+            model_lookup=model_lookup,
+            mission_model_aliases=mission_model_aliases,
+            alias_to_primary=alias_to_primary,
+            week_mapping=week_mapping,
+            points_mapping=points_mapping,
+            difficulty_mapping=difficulty_mapping,
+            persist_mode="truncate",
+        )
+    else:
+        persist_challenge_attempts([], mode="truncate")
+    return rows
+
+
+def _get_or_build_challenge_attempt_payloads(data_file: Optional[str] = None) -> List[dict]:
+    """
+    Retrieve cached challenge attempts, rebuilding them from chats if necessary.
+    """
+    attempt_payloads = load_challenge_attempts()
+    if attempt_payloads:
+        return attempt_payloads
+
+    chats_payload = load_chats()
+    if not chats_payload:
+        remote_chats = _fetch_remote_chats()
+        if remote_chats:
+            chats_payload = remote_chats
+        else:
+            target_file = data_file or find_latest_export()
+            if target_file:
+                try:
+                    with open(target_file, "r", encoding="utf-8") as f:
+                        chats_payload = json.load(f)
+                except (FileNotFoundError, json.JSONDecodeError):
+                    chats_payload = None
+
+    if not chats_payload:
+        return []
+
+    _persist_chats_and_rebuild_attempts(chats_payload, mode="upsert")
+    return load_challenge_attempts()
+
+
 def build_mission_analysis_context(
     *,
     data_file: Optional[str] = None,
@@ -425,53 +553,79 @@ def build_mission_analysis_context(
             mode=reload_mode,
         )
 
-        data_source = "database"
+        data_source = "challenge_attempts"
         chats_payload: Optional[List[dict]] = None
+        attempt_payloads: List[dict] = [] if force_refresh else load_challenge_attempts()
 
         if force_refresh:
             chats_payload = _fetch_remote_chats()
             if chats_payload is not None:
                 persist_chats(chats_payload, mode=reload_mode)
+                attempt_payloads = _rebuild_challenge_attempts_from_chats(
+                    chats_payload,
+                    model_lookup=model_lookup,
+                    mission_model_aliases=mission_model_aliases,
+                    alias_to_primary=alias_to_primary,
+                    week_mapping=week_mapping,
+                    points_mapping=points_mapping,
+                    difficulty_mapping=difficulty_mapping,
+                    persist_mode="truncate",
+                )
                 data_source = "api"
 
-        if not chats_payload:
-            chats_payload = load_chats()
-            if chats_payload:
-                data_source = "database"
+        if not attempt_payloads:
+            attempt_payloads = load_challenge_attempts()
 
-        if not chats_payload:
-            target_file = data_file or find_latest_export()
-            if not target_file:
+        if not attempt_payloads:
+            if not chats_payload:
+                chats_payload = load_chats()
+                if chats_payload:
+                    data_source = "database"
+
+            if not chats_payload:
+                target_file = data_file or find_latest_export()
+                if not target_file:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="No data available. Please configure Open WebUI credentials or provide a chat export.",
+                    )
+                logger.info("Using fallback export file: %s", target_file)
+                try:
+                    with open(target_file, "r", encoding="utf-8") as f:
+                        chats_payload = json.load(f)
+                    data_source = "file"
+                    persist_chats(chats_payload, mode="upsert")
+                except (FileNotFoundError, json.JSONDecodeError) as exc:
+                    logger.error("Failed to load fallback export: %s", exc)
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Data is unavailable. Please refresh from Open WebUI.",
+                    ) from exc
+
+            if not chats_payload:
                 raise HTTPException(
                     status_code=503,
-                    detail="No data available. Please configure Open WebUI credentials or provide a chat export.",
+                    detail="Unable to load chat data. Please refresh from Open WebUI.",
                 )
-            logger.info("Using fallback export file: %s", target_file)
-            try:
-                with open(target_file, "r", encoding="utf-8") as f:
-                    chats_payload = json.load(f)
-                data_source = "file"
-                persist_chats(chats_payload, mode="upsert")
-            except (FileNotFoundError, json.JSONDecodeError) as exc:
-                logger.error("Failed to load fallback export: %s", exc)
-                raise HTTPException(
-                    status_code=503,
-                    detail="Data is unavailable. Please refresh from Open WebUI.",
-                ) from exc
 
-        if not chats_payload:
-            raise HTTPException(
-                status_code=503,
-                detail="Unable to load chat data. Please refresh from Open WebUI.",
+            attempt_payloads = _rebuild_challenge_attempts_from_chats(
+                chats_payload,
+                model_lookup=model_lookup,
+                mission_model_aliases=mission_model_aliases,
+                alias_to_primary=alias_to_primary,
+                week_mapping=week_mapping,
+                points_mapping=points_mapping,
+                difficulty_mapping=difficulty_mapping,
+                persist_mode="truncate",
             )
 
-        filtered_chats = _filter_chats_by_mission_models(chats_payload, mission_model_aliases)
-        logger.info(
-            "Prepared %d mission-related chats from %d total chats (data source=%s)",
-            len(filtered_chats),
-            len(chats_payload),
-            data_source,
-        )
+        if not attempt_payloads:
+            raise HTTPException(
+                status_code=503,
+                detail="Unable to process mission attempts. Please refresh from Open WebUI.",
+            )
+
+        logger.info("Loaded %d cached challenge attempts (data source=%s)", len(attempt_payloads), data_source)
 
         user_info_map: Dict[str, dict] = {}
         if force_refresh:
@@ -489,7 +643,7 @@ def build_mission_analysis_context(
 
         analyzer = MissionAnalyzer(
             json_file=None,
-            data=filtered_chats,
+            data=[],
             user_names_file=resolved_user_names,
             user_names=user_names_only,
             model_lookup=model_lookup,
@@ -501,7 +655,8 @@ def build_mission_analysis_context(
             verbose=False,
         )
 
-        analyzer.analyze_missions(
+        analyzer.load_challenge_attempts(
+            attempt_payloads,
             filter_challenge=filter_challenge,
             filter_user=filter_user,
             filter_status=filter_status,
@@ -657,151 +812,114 @@ def _build_chat_previews(
     filter_week: Optional[str] = None,
     model_lookup: Optional[Dict[str, str]] = None,
 ) -> List[ChatPreview]:
-    """Transform analyzer results into lightweight cards for the frontend, applying filters."""
-    mission_lookup: Dict[int, Dict] = {chat["chat_num"]: chat for chat in analyzer.mission_chats}
+    """Transform cached challenge attempts into lightweight cards for the frontend."""
     previews: List[ChatPreview] = []
     model_lookup = model_lookup or {}
-    week_lookup_lower = {str(key).lower(): str(value) for key, value in analyzer.week_mapping.items()}
 
-    def resolve_week_for_candidates(candidates: Iterable[Optional[str]]) -> Optional[str]:
-        seen: Set[str] = set()
-        for candidate in candidates:
-            if candidate is None:
-                continue
-            candidate_str = str(candidate).strip()
-            if not candidate_str:
-                continue
-
-            potential_keys = [
-                candidate_str,
-                analyzer._resolve_alias(candidate_str),
-                analyzer._resolve_primary_identifier(candidate_str),
-            ]
-
-            for key in potential_keys:
-                if key is None:
-                    continue
-                key_str = str(key)
-                if key_str in seen:
-                    continue
-                seen.add(key_str)
-
-                direct_week = analyzer.week_mapping.get(key_str)
-                if direct_week:
-                    return str(direct_week)
-
-                lower_week = week_lookup_lower.get(key_str.lower())
-                if lower_week:
-                    return str(lower_week)
-
-        return None
-
-    for index, item in enumerate(analyzer.data, start=1):
-        chat = item.get("chat", {})
-        models: Iterable[str] = chat.get("models", [])
-        messages: List[dict] = chat.get("messages", [])
-        user_id = item.get("user_id", "Unknown")
-        created_at = item.get("created_at")
-
-        # Check if this chat is a mission
-        mission_chat = mission_lookup.get(index)
-        is_mission = mission_chat is not None
-        completed = mission_chat["completed"] if mission_chat else False
-        mission_week = None
-        mission_display_name = None
-        model_candidates: List[str] = []
-
-        # Apply user filter
+    for mission_chat in analyzer.mission_chats:
+        user_id = mission_chat.get("user_id", "Unknown")
         if filter_user and user_id != filter_user:
             continue
 
-        # For mission-specific filters, check if it's a mission chat
-        if is_mission and mission_chat:
-            mission_info = mission_chat["mission_info"]
-            mission_model = mission_chat["model"]
+        mission_info = mission_chat.get("mission_info") or {}
+        mission_model = mission_chat.get("model")
+        mission_week = mission_info.get("week")
+        mission_display_name = mission_info.get("mission_id") or model_lookup.get(mission_model, mission_model)
+        completed = mission_chat.get("completed", False)
 
-            if filter_challenge and not analyzer._mission_matches_filter(mission_model, filter_challenge):
+        if filter_challenge and not analyzer._mission_matches_filter(mission_model, filter_challenge):
+            continue
+
+        if filter_status and filter_status.lower() != "not_attempted":
+            status_filter = filter_status.lower()
+            if status_filter == "completed" and not completed:
                 continue
-            if filter_status:
-                if filter_status.lower() == "completed" and not completed:
-                    continue
-                elif filter_status.lower() == "attempted" and completed:
-                    continue
-        else:
-            # If filters are applied but this is not a mission chat, skip it
-            if filter_challenge or filter_status or filter_week:
+            if status_filter == "attempted" and completed:
                 continue
 
-        # Resolve a user-friendly model name using the lookup map. Falls back to the raw
-        # identifier when no metadata is available.
-        display_model = "Unknown"
-        raw_model = "Unknown"
-        for entry in models:
-            candidate_id = None
-            candidate_name = None
-            if isinstance(entry, str):
-                candidate_id = entry
-            elif isinstance(entry, dict):
-                candidate_id = entry.get("id") or entry.get("model") or entry.get("slug")
-                candidate_name = entry.get("name") or entry.get("display_name")
-            if candidate_id:
-                raw_model = candidate_id
-                model_candidates.append(candidate_id)
-                display_model = model_lookup.get(candidate_id) or candidate_name or candidate_id
-                break
+        if filter_week:
+            compare_week = mission_week
+            if compare_week is None:
+                compare_week = analyzer._lookup_week_for_model(mission_model)
+            if not compare_week or str(compare_week) != str(filter_week):
+                continue
 
-        if display_model == "Unknown" and messages:
-            for msg in messages:
-                candidate = msg.get("model")
-                candidate_name = msg.get("modelName") or msg.get("model_name")
-                if candidate:
-                    raw_model = candidate
-                    model_candidates.append(candidate)
-                    display_model = model_lookup.get(candidate) or candidate_name or candidate
-                    break
-
-        if mission_chat:
-            mission_info = mission_chat.get("mission_info", {})
-            mission_week = mission_info.get("week")
-            mission_display_name = mission_info.get("mission_id") or display_model
-            mission_model = mission_chat.get("model")
-            if mission_model:
-                model_candidates.append(str(mission_model))
-        else:
-            mission_display_name = None
-
-        if raw_model and raw_model not in model_candidates:
-            model_candidates.append(str(raw_model))
-
-        resolved_week = resolve_week_for_candidates(model_candidates)
-        if resolved_week is not None:
-            mission_week = resolved_week
+        mission_messages = mission_chat.get("messages") or []
+        mission_message_count = mission_chat.get("message_count", len(mission_messages))
 
         previews.append(
             ChatPreview(
-                num=index,
-                title=item.get("title", "Untitled"),
+                num=mission_chat.get("chat_num") or len(previews) + 1,
+                title=mission_chat.get("title", "Untitled"),
                 user_id=user_id,
                 user_name=analyzer.get_user_name(user_id),
-                created_at=item.get("created_at"),
-                model=display_model if display_model != "Unknown" else model_lookup.get(raw_model, raw_model),
-                message_count=len(messages),
-                is_mission=is_mission,
+                created_at=mission_chat.get("created_at"),
+                model=mission_display_name or mission_model or "Unknown",
+                message_count=mission_message_count,
+                is_mission=True,
                 completed=completed,
                 week=mission_week,
                 challenge_name=mission_display_name,
+                attempt_id=mission_chat.get("attempt_id"),
                 messages=[
                     ChatMessage(
                         role=msg.get("role"),
                         content=msg.get("content"),
                         timestamp=msg.get("timestamp") or msg.get("created_at") or msg.get("updated_at"),
                     )
-                    for msg in messages
+                    for msg in mission_messages
                 ],
             )
         )
 
     return previews
+
+
+def _build_challenge_attempt_entries(
+    analyzer: MissionAnalyzer,
+    model_lookup: Optional[Dict[str, str]] = None,
+) -> List[ChallengeAttemptRecord]:
+    """
+    Transform mission analyzer attempts into a flattened structure for dashboard tables.
+    """
+    entries: List[ChallengeAttemptRecord] = []
+    model_lookup = model_lookup or {}
+
+    for mission_chat in analyzer.mission_chats:
+        user_id = mission_chat.get("user_id", "Unknown")
+        mission_info = mission_chat.get("mission_info") or {}
+        mission_model = mission_chat.get("model")
+        mission_week = mission_info.get("week")
+        challenge_name = mission_info.get("mission_id") or model_lookup.get(mission_model, mission_model) or "Unknown mission"
+        attempt_identifier = mission_chat.get("attempt_id") or mission_chat.get("chat_id") or str(
+            mission_chat.get("chat_num") or len(entries) + 1
+        )
+
+        message_count = mission_chat.get("message_count")
+        if message_count is None:
+            message_count = len(mission_chat.get("messages") or [])
+        user_message_count = mission_chat.get("user_message_count") or 0
+
+        entries.append(
+            ChallengeAttemptRecord(
+                attempt_id=str(attempt_identifier),
+                attempt_number=mission_chat.get("chat_num") or len(entries) + 1,
+                chat_id=mission_chat.get("chat_id"),
+                chat_title=mission_chat.get("title"),
+                user_id=user_id,
+                user_name=analyzer.get_user_name(user_id),
+                challenge_name=challenge_name,
+                mission_model=mission_model,
+                mission_week=mission_week,
+                completed=bool(mission_chat.get("completed")),
+                message_count=message_count,
+                user_message_count=user_message_count,
+                started_at=mission_chat.get("created_at"),
+                updated_at=mission_chat.get("updated_at"),
+            )
+        )
+
+    return entries
 
 
 def _decorate_leaderboard(
@@ -1142,6 +1260,10 @@ def build_dashboard_response(
         filter_week=filter_week,
         model_lookup=context.model_lookup,
     )
+    challenge_attempts = _build_challenge_attempt_entries(
+        analyzer,
+        model_lookup=context.model_lookup,
+    )
     challenge_results = _decorate_challenge_results(
         analyzer.get_challenge_results(filter_challenge=filter_challenge, filter_status=filter_status)
     )
@@ -1185,6 +1307,7 @@ def build_dashboard_response(
         leaderboard=leaderboard,
         mission_breakdown=missions,
         all_chats=chats,
+        challenge_attempts=challenge_attempts,
         challenge_results=challenge_results,
         export_data=export_data,
     )
@@ -1285,7 +1408,7 @@ def reload_chats(mode: str = "upsert") -> Dict[str, Any]:
         raise HTTPException(status_code=503, detail="Unable to fetch chats from Open WebUI.")
 
     try:
-        rows = persist_chats(chats_payload, mode=mode_normalized)
+        rows = _persist_chats_and_rebuild_attempts(chats_payload, mode=mode_normalized)
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.exception("Chat reload failed")
         raise HTTPException(status_code=500, detail=f"Chat reload failed: {exc}") from exc
@@ -1331,6 +1454,7 @@ def reload_all(mode: str = "upsert") -> List[Dict[str, Any]]:
         # Remove chats first to satisfy foreign key constraints before truncating users.
         try:
             persist_chats([], mode="truncate")
+            persist_challenge_attempts([], mode="truncate")
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.exception("Full reload failed while truncating chats")
             raise HTTPException(status_code=500, detail=f"Chat truncation failed: {exc}") from exc
@@ -1343,7 +1467,7 @@ def reload_all(mode: str = "upsert") -> List[Dict[str, Any]]:
         results.append(_build_reload_result("users", "truncate", rows_users))
 
         try:
-            rows_chats = persist_chats(chats_payload, mode="upsert")
+            rows_chats = _persist_chats_and_rebuild_attempts(chats_payload, mode="upsert")
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.exception("Full reload failed during chat persistence after truncate")
             raise HTTPException(status_code=500, detail=f"Chat persistence failed: {exc}") from exc
@@ -1357,7 +1481,7 @@ def reload_all(mode: str = "upsert") -> List[Dict[str, Any]]:
         results.append(_build_reload_result("users", "upsert", rows_users))
 
         try:
-            rows_chats = persist_chats(chats_payload, mode="upsert")
+            rows_chats = _persist_chats_and_rebuild_attempts(chats_payload, mode="upsert")
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.exception("Full reload failed during chat persistence")
             raise HTTPException(status_code=500, detail=f"Chat persistence failed: {exc}") from exc
@@ -1422,24 +1546,12 @@ def build_users_response() -> UsersResponse:
     # Load model metadata and user information
     model_lookup, mission_model_aliases, alias_to_primary, week_mapping, points_mapping, difficulty_mapping = _load_model_metadata()
 
-    chats_payload = load_chats()
-    if not chats_payload:
-        remote_chats = _fetch_remote_chats()
-        if remote_chats:
-            chats_payload = remote_chats
-            persist_chats(remote_chats, mode="upsert")
-        else:
-            latest_export = find_latest_export()
-            if not latest_export:
-                raise HTTPException(
-                    status_code=503,
-                    detail="No data available. Please configure Open WebUI credentials or provide a chat export.",
-                )
-            with open(latest_export, "r", encoding="utf-8") as f:
-                chats_payload = json.load(f)
-            persist_chats(chats_payload, mode="upsert")
-
-    filtered_chats = _filter_chats_by_mission_models(chats_payload, mission_model_aliases)
+    attempt_payloads = _get_or_build_challenge_attempt_payloads()
+    if not attempt_payloads:
+        raise HTTPException(
+            status_code=503,
+            detail="No mission attempt data available. Please reload chats.",
+        )
 
     user_info_map, _ = load_users()
     if not user_info_map:
@@ -1453,7 +1565,7 @@ def build_users_response() -> UsersResponse:
     # Initialize analyzer
     analyzer = MissionAnalyzer(
         json_file=None,
-        data=filtered_chats,
+        data=[],
         user_names=user_names_only,
         model_lookup=model_lookup,
         mission_model_aliases=mission_model_aliases,
@@ -1464,15 +1576,10 @@ def build_users_response() -> UsersResponse:
         verbose=False,
     )
 
-    # Analyze missions without filters
-    analyzer.analyze_missions()
+    analyzer.load_challenge_attempts(attempt_payloads)
 
     # Get all users
-    all_users = set()
-    for item in analyzer.data:
-        user_id = item.get("user_id", "Unknown")
-        if user_id and user_id != "Unknown":
-            all_users.add(user_id)
+    all_users = {chat["user_id"] for chat in analyzer.mission_chats if chat.get("user_id")}
 
     # Get all missions
     all_missions = []
@@ -1623,24 +1730,12 @@ def build_challenges_response() -> ChallengesResponse:
     # Load model metadata and user information
     model_lookup, mission_model_aliases, alias_to_primary, week_mapping, points_mapping, difficulty_mapping = _load_model_metadata()
 
-    chats_payload = load_chats()
-    if not chats_payload:
-        remote_chats = _fetch_remote_chats()
-        if remote_chats:
-            chats_payload = remote_chats
-            persist_chats(remote_chats, mode="upsert")
-        else:
-            latest_export = find_latest_export()
-            if not latest_export:
-                raise HTTPException(
-                    status_code=503,
-                    detail="No data available. Please configure Open WebUI credentials or provide a chat export.",
-                )
-            with open(latest_export, "r", encoding="utf-8") as f:
-                chats_payload = json.load(f)
-            persist_chats(chats_payload, mode="upsert")
-
-    filtered_chats = _filter_chats_by_mission_models(chats_payload, mission_model_aliases)
+    attempt_payloads = _get_or_build_challenge_attempt_payloads()
+    if not attempt_payloads:
+        raise HTTPException(
+            status_code=503,
+            detail="No mission attempt data available. Please reload chats.",
+        )
 
     user_info_map, _ = load_users()
     if not user_info_map:
@@ -1654,7 +1749,7 @@ def build_challenges_response() -> ChallengesResponse:
     # Initialize analyzer
     analyzer = MissionAnalyzer(
         json_file=None,
-        data=filtered_chats,
+        data=[],
         user_names=user_names_only,
         model_lookup=model_lookup,
         mission_model_aliases=mission_model_aliases,
@@ -1665,15 +1760,10 @@ def build_challenges_response() -> ChallengesResponse:
         verbose=False,
     )
 
-    # Analyze missions without filters
-    analyzer.analyze_missions()
+    analyzer.load_challenge_attempts(attempt_payloads)
 
     # Get all users
-    all_users = set()
-    for item in analyzer.data:
-        user_id = item.get("user_id", "Unknown")
-        if user_id and user_id != "Unknown":
-            all_users.add(user_id)
+    all_users = {chat["user_id"] for chat in analyzer.mission_chats if chat.get("user_id")}
 
     total_users = len(all_users)
 

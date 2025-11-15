@@ -96,6 +96,23 @@ export interface ChatPreview {
   messages: ChatMessage[];
 }
 
+export interface ChallengeAttemptRecord {
+  attempt_id: string;
+  attempt_number: number;
+  chat_id?: string | null;
+  chat_title?: string | null;
+  user_id: string;
+  user_name: string;
+  challenge_name: string;
+  mission_model?: string | null;
+  mission_week?: string | number | null;
+  completed: boolean;
+  message_count: number;
+  user_message_count: number;
+  started_at?: string | number | null;
+  updated_at?: string | number | null;
+}
+
 export interface ChallengeResultEntry {
   user_id: string;
   user_name: string;
@@ -114,6 +131,7 @@ export interface DashboardResponse {
   leaderboard: LeaderboardEntry[];
   mission_breakdown: MissionBreakdownEntry[];
   all_chats: ChatPreview[];
+  challenge_attempts: ChallengeAttemptRecord[];
   challenge_results: ChallengeResultEntry[];
   export_data: UserChallengeExportRow[];
 }
