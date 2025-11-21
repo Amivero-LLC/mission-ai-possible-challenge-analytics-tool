@@ -182,6 +182,45 @@ export default function CampaignDashboard({ initialSummary = null, initialWeek =
     () => filterRows(resolvedSummary.rows, userFilter),
     [resolvedSummary.rows, userFilter],
   );
+  const totalsRow = useMemo(() => {
+    if (!visibleWeeks.length) {
+      return null;
+    }
+    const participantSetsByWeek: Record<number, Set<string>> = {};
+    const weekTotals: Record<number, { participants: number; points: number }> = {};
+    const overallParticipants = new Set<string>();
+
+    visibleWeeks.forEach((week) => {
+      participantSetsByWeek[week] = new Set();
+      weekTotals[week] = { participants: 0, points: 0 };
+    });
+
+    resolvedSummary.rows.forEach((row) => {
+      visibleWeeks.forEach((week) => {
+        const points = row.pointsByWeek?.[week] ?? 0;
+        if (points > 0) {
+          const email = row.user.email.toLowerCase();
+          participantSetsByWeek[week].add(email);
+          overallParticipants.add(email);
+        }
+        weekTotals[week].points += points;
+      });
+    });
+
+    const weeks = visibleWeeks.reduce<Record<number, { participants: number; points: number }>>((acc, week) => {
+      acc[week] = {
+        participants: participantSetsByWeek[week].size,
+        points: weekTotals[week].points,
+      };
+      return acc;
+    }, {});
+
+    return {
+      weeks,
+      totalParticipants: overallParticipants.size,
+      totalPoints: Object.values(weekTotals).reduce((sum, entry) => sum + entry.points, 0),
+    };
+  }, [resolvedSummary.rows, visibleWeeks]);
   const lastUploadLabel = useMemo(() => {
     if (!lastUploadAt) {
       return 'No uploads yet this session';
@@ -837,33 +876,55 @@ export default function CampaignDashboard({ initialSummary = null, initialWeek =
                             </td>
                           </tr>
                         ) : (
-                          activityOverview.map((activity) => (
-                            <tr key={activity.activityType}>
-                              <td style={{ fontWeight: '600', color: '#1f2937' }}>{activity.activityType}</td>
-                              {visibleWeeks.map((week) => {
-                                const weekStats = activity.weeks?.[week];
-                                const participants = weekStats?.participants ?? 0;
-                                const points = weekStats?.points ?? 0;
-                                return (
-                                  <td key={`${activity.activityType}-${week}`} style={{ textAlign: 'center' }}>
-                                    <div style={{ fontWeight: '600' }}>👥 {participants.toLocaleString()}</div>
-                                    <div style={{ color: '#6b7280' }}>⭐ {points.toLocaleString()}</div>
-                                  </td>
-                                );
-                              })}
-                              <td style={{ textAlign: 'center', fontWeight: '600' }}>
-                                {activity.totalParticipants.toLocaleString()}
-                              </td>
-                              <td style={{ textAlign: 'center', fontWeight: '600' }}>
-                                {activity.totalPoints.toLocaleString()}
-                              </td>
-                            </tr>
-                          ))
+                          <>
+                            {activityOverview.map((activity) => (
+                              <tr key={activity.activityType}>
+                                <td style={{ fontWeight: '600', color: '#1f2937' }}>{activity.activityType}</td>
+                                {visibleWeeks.map((week) => {
+                                  const weekStats = activity.weeks?.[week];
+                                  const participants = weekStats?.participants ?? 0;
+                                  const points = weekStats?.points ?? 0;
+                                  return (
+                                    <td key={`${activity.activityType}-${week}`} style={{ textAlign: 'center' }}>
+                                      <div style={{ fontWeight: '600' }}>👥 {participants.toLocaleString()}</div>
+                                      <div style={{ color: '#6b7280' }}>⭐ {points.toLocaleString()}</div>
+                                    </td>
+                                  );
+                                })}
+                                <td style={{ textAlign: 'center', fontWeight: '600' }}>
+                                  {activity.totalParticipants.toLocaleString()}
+                                </td>
+                                <td style={{ textAlign: 'center', fontWeight: '600' }}>
+                                  {activity.totalPoints.toLocaleString()}
+                                </td>
+                              </tr>
+                            ))}
+                            {totalsRow ? (
+                              <tr key="totals-row" style={{ background: '#f9fafb' }}>
+                                <td style={{ fontWeight: '700', color: '#111827' }}>Total</td>
+                                {visibleWeeks.map((week) => {
+                                  const weekTotals = totalsRow.weeks[week] ?? { participants: 0, points: 0 };
+                                  return (
+                                    <td key={`total-${week}`} style={{ textAlign: 'center' }}>
+                                      <div style={{ fontWeight: '700' }}>👥 {weekTotals.participants.toLocaleString()}</div>
+                                      <div style={{ color: '#374151' }}>⭐ {weekTotals.points.toLocaleString()}</div>
+                                    </td>
+                                  );
+                                })}
+                                <td style={{ textAlign: 'center', fontWeight: '700' }}>
+                                  {totalsRow.totalParticipants.toLocaleString()}
+                                </td>
+                                <td style={{ textAlign: 'center', fontWeight: '700' }}>
+                                  {totalsRow.totalPoints.toLocaleString()}
+                                </td>
+                              </tr>
+                            ) : null}
+                          </>
                         )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                  </tbody>
+                </table>
+              </div>
+            </div>
               </div>
             </section>
           </div>
