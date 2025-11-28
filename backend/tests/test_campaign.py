@@ -397,6 +397,7 @@ def test_campaign_status_missing_credit(session, monkeypatch):
                 }
             },
             {"status@example.com": []},
+            {},
         )
 
     monkeypatch.setattr(campaign_service, "_prepare_status_sources", fake_status_sources)
@@ -427,6 +428,7 @@ def test_campaign_status_points_mismatch(session, monkeypatch):
                     )
                 ]
             },
+            {},
         )
 
     monkeypatch.setattr(campaign_service, "_prepare_status_sources", fake_status_sources)
@@ -435,3 +437,36 @@ def test_campaign_status_points_mismatch(session, monkeypatch):
     assert summary.rows
     assert summary.rows[0].statusIndicators
     assert summary.rows[0].statusIndicators[0].code == "points-mismatch"
+
+
+def test_campaign_bootstraps_completion_only_users(session, monkeypatch):
+    def fake_status_sources(_session):
+        return (
+            {
+                "orphan@example.com": {
+                    "intel guardian": CompletionRecord(
+                        display_name="Intel Guardian",
+                        normalized_name="intel guardian",
+                        count=1,
+                    )
+                }
+            },
+            {},
+            {
+                "orphan@example.com": {
+                    "first_name": "Orphan",
+                    "last_name": "User",
+                    "email": "orphan@example.com",
+                }
+            },
+        )
+
+    monkeypatch.setattr(campaign_service, "_prepare_status_sources", fake_status_sources)
+
+    summary = get_campaign_summary(session, week=None, user_filter=None)
+    assert summary.rows
+    row = summary.rows[0]
+    assert row.user.email == "orphan@example.com"
+    assert row.totalPoints == 0
+    assert row.statusIndicators
+    assert row.statusIndicators[0].code == "missing-credit"

@@ -174,6 +174,17 @@ def _parse_datetime(value: str | None, *, required: bool, field: str, line_numbe
     return None
 
 
+def _split_display_name(value: str | None) -> tuple[str | None, str | None]:
+    if value is None:
+        return None, None
+    parts = [part for part in value.split(" ") if part]
+    if not parts:
+        return None, None
+    if len(parts) == 1:
+        return parts[0], None
+    return parts[0], " ".join(parts[1:])
+
+
 def _coerce_row(raw_row: dict[str, str | None], line_number: int) -> _SubmissionRow:
     user_sharepoint_id = _parse_int(raw_row.get("UserID"), required=True, field="UserID", line_number=line_number)
     activity_id = _parse_int(raw_row.get("ActivityID"), required=True, field="ActivityID", line_number=line_number)
@@ -754,19 +765,30 @@ def _build_activity_overview(
 
 def _collect_completed_challenges(
     context: MissionAnalysisContext | None,
-) -> dict[str, dict[str, CompletionRecord]]:
+) -> tuple[dict[str, dict[str, CompletionRecord]], dict[str, dict[str, str | None]]]:
     completions: dict[str, dict[str, CompletionRecord]] = defaultdict(dict)
+    completion_users: dict[str, dict[str, str | None]] = {}
     if context is None:
-        return completions
+        return completions, completion_users
 
     analyzer = context.analyzer
     user_info_map = context.user_info_map
 
     for user_id, stats in analyzer.user_stats.items():
         user_details = user_info_map.get(user_id, {})
-        email = (user_details.get("email") or "").strip().lower()
+        raw_email = (user_details.get("email") or "").strip()
+        email = raw_email.lower()
         if not email:
             continue
+
+        if email not in completion_users:
+            first_name, last_name = _split_display_name(user_details.get("name"))
+            completion_users[email] = {
+                "first_name": first_name,
+                "last_name": last_name,
+                "email": raw_email or email,
+            }
+
         per_user = completions[email]
         for detail in stats.get("missions_completed_details", []):
             mission_name = detail.get("mission_id")
@@ -783,7 +805,7 @@ def _collect_completed_challenges(
                     count=1,
                 )
 
-    return completions
+    return completions, completion_users
 
 
 def _collect_submission_records(
@@ -831,18 +853,19 @@ def _collect_submission_records(
 def _prepare_status_sources(session: Session) -> tuple[
     dict[str, dict[str, CompletionRecord]],
     dict[str, list[SubmissionRecord]],
+    dict[str, dict[str, str | None]],
 ]:
     models_by_id, models_by_name = _build_model_lookup(session)
     analysis_context = build_mission_analysis_context(strict=False)
-    completions = _collect_completed_challenges(analysis_context)
+    completions, completion_users = _collect_completed_challenges(analysis_context)
     submissions = _collect_submission_records(session, models_by_id, models_by_name)
-    return completions, submissions
+    return completions, submissions, completion_users
 
 
 def get_campaign_summary(session: Session, *, week: str | None, user_filter: str | None) -> CampaignSummaryResponse:
     week_filter = _coerce_week_param(week)
     normalized_user = user_filter.strip().lower() if user_filter and user_filter.strip() else None
-    completions_index, submissions_index = _prepare_status_sources(session)
+    completions_index, submissions_index, completion_user_details = _prepare_status_sources(session)
 
     weeks_present_query = session.execute(
         select(SubmittedActivity.week_id).distinct().order_by(SubmittedActivity.week_id)
@@ -880,15 +903,6 @@ def get_campaign_summary(session: Session, *, week: str | None, user_filter: str
         capped_weeks=capped_weeks,
     )
 
-    if not aggregates:
-        last_upload_at = _get_last_upload_timestamp(session)
-        return CampaignSummaryResponse(
-            weeks_present=capped_weeks,
-            rows=[],
-            last_upload_at=last_upload_at,
-            activity_overview=activity_overview,
-        )
-
     grouped: dict[str, dict] = {}
     for entry in aggregates:
         key = entry.email.lower()
@@ -905,6 +919,32 @@ def get_campaign_summary(session: Session, *, week: str | None, user_filter: str
             },
         )
         record["points"][entry.week_id] = Decimal(entry.points or 0)
+
+    completion_candidates = set(completions_index.keys())
+    if normalized_user:
+        completion_candidates = {normalized_user} if normalized_user in completion_candidates else set()
+
+    missing_completion_rows = completion_candidates.difference(grouped.keys())
+    for email in missing_completion_rows:
+        profile = completion_user_details.get(email, {})
+        grouped[email] = {
+            "user": {
+                "firstName": profile.get("first_name"),
+                "lastName": profile.get("last_name"),
+                "email": profile.get("email") or email,
+            },
+            "points": defaultdict(Decimal),
+            "sharepoint_id": None,
+        }
+
+    if not grouped:
+        last_upload_at = _get_last_upload_timestamp(session)
+        return CampaignSummaryResponse(
+            weeks_present=capped_weeks,
+            rows=[],
+            last_upload_at=last_upload_at,
+            activity_overview=activity_overview,
+        )
 
     sharepoint_ids = {info["sharepoint_id"] for info in grouped.values() if info["sharepoint_id"] is not None}
     email_keys = set(grouped.keys())
