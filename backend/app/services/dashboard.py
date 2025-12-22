@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sys
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1047,11 +1048,33 @@ def _generate_export_data(
     Returns:
         List of dicts, each representing a user/challenge combination
     """
+    def lookup_with_fallback(mapping: Dict[str, Any], *keys: str) -> Any:
+        """
+        Retrieve a mapping value with case-insensitive fallbacks across
+        multiple candidate keys (alias, primary id, display name).
+        """
+        for key in keys:
+            if not key:
+                continue
+            if key in mapping:
+                return mapping[key]
+            key_lower = str(key).lower()
+            for map_key, val in mapping.items():
+                if str(map_key).lower() == key_lower:
+                    return val
+        return None
+
+    default_points_by_difficulty = {"easy": 15, "medium": 20, "hard": 25}
     export_rows = []
 
-    # Get all users from the data
+    # Get all users from available mission data. The analyzer is often populated
+    # from cached challenge attempts, which leaves ``analyzer.data`` empty, so
+    # fall back to the mission chat payloads that always include user_ids.
     all_users = set()
-    for item in analyzer.data:
+    mission_source = analyzer.mission_chats or analyzer.data
+    for item in mission_source:
+        if not isinstance(item, dict):
+            continue
         user_id = item.get("user_id", "Unknown")
         if user_id and user_id != "Unknown":
             all_users.add(user_id)
@@ -1124,16 +1147,7 @@ def _generate_export_data(
                             num_messages += analyzer._count_user_messages(attempt.get("messages", []))
                     datetime_started = user_attempts[0].get("created_at")
                     datetime_completed = first_completion.get("created_at")
-
-                    # Calculate points for this challenge
-                    points = points_mapping.get(alias) or points_mapping.get(primary_id)
-                    if points is None:
-                        # Try lowercase variation
-                        for key, val in points_mapping.items():
-                            if key.lower() == alias.lower() or key.lower() == primary_id.lower():
-                                points = val
-                                break
-                    points_earned = points if points is not None else 0
+                    points_earned = 0
                 else:
                     status = "Attempted"
                     completed = "No"
@@ -1149,22 +1163,25 @@ def _generate_export_data(
                     points_earned = 0
 
             # Get week for this challenge
-            week = week_mapping.get(alias) or week_mapping.get(primary_id) or ""
+            week = lookup_with_fallback(week_mapping, alias, primary_id, challenge_name) or ""
             if not week:
-                # Try lowercase variation
-                for key, val in week_mapping.items():
-                    if key.lower() == alias.lower() or key.lower() == primary_id.lower():
-                        week = val
-                        break
+                week_match = re.search(r"week\s*(\d+)", challenge_name, re.IGNORECASE)
+                if week_match:
+                    week = week_match.group(1)
 
-            # Get difficulty for this challenge
-            difficulty = difficulty_mapping.get(alias) or difficulty_mapping.get(primary_id) or ""
+            # Get difficulty for this challenge with regex fallback from the display name
+            difficulty = lookup_with_fallback(difficulty_mapping, alias, primary_id, challenge_name) or ""
             if not difficulty:
-                # Try lowercase variation
-                for key, val in difficulty_mapping.items():
-                    if key.lower() == alias.lower() or key.lower() == primary_id.lower():
-                        difficulty = val
-                        break
+                diff_match = re.search(r"\b(easy|medium|hard)\b", challenge_name, re.IGNORECASE)
+                if diff_match:
+                    difficulty = diff_match.group(1).capitalize()
+            elif str(difficulty).lower() in default_points_by_difficulty:
+                difficulty = str(difficulty).lower().capitalize()
+
+            # Resolve points; if metadata is missing, infer from difficulty
+            points = lookup_with_fallback(points_mapping, alias, primary_id, challenge_name)
+            if points is None and difficulty:
+                points = default_points_by_difficulty.get(str(difficulty).lower())
 
             # Format timestamps as strings if they exist
             datetime_started_str = None
@@ -1195,7 +1212,7 @@ def _generate_export_data(
                 "difficulty": str(difficulty) if difficulty else "",
                 "datetime_started": datetime_started_str,
                 "datetime_completed": datetime_completed_str,
-                "points_earned": points_earned,
+                "points_earned": points if points is not None else points_earned,
             })
 
     return export_rows
