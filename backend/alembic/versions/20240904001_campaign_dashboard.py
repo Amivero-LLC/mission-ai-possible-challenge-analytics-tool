@@ -85,7 +85,7 @@ def upgrade() -> None:
         ranks_table,
         [
             {"rank_number": 0, "rank_name": "None", "minimum_points": 0, "swag": "None", "total_raffle_tickets": 0},
-            {"rank_number": 1, "rank_name": "Analyst", "minimum_points": 150, "swag": "Sticker", "total_raffle_tickets": 1},
+            {"rank_number": 1, "rank_name": "Analyst", "minimum_points": 120, "swag": "Sticker", "total_raffle_tickets": 1},
             {"rank_number": 2, "rank_name": "Agent", "minimum_points": 300, "swag": None, "total_raffle_tickets": 3},
             {"rank_number": 3, "rank_name": "Field Agent", "minimum_points": 500, "swag": "Custom Water Bottle", "total_raffle_tickets": 7},
             {"rank_number": 4, "rank_name": "Secret Agent", "minimum_points": 750, "swag": "Custom Hoodie", "total_raffle_tickets": 15},

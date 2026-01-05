@@ -25,7 +25,7 @@ const RANK_DETAILS = [
   { number: 4, name: 'Secret Agent', minPoints: 750, color: 'bg-indigo-600' },
   { number: 3, name: 'Field Agent', minPoints: 500, color: 'bg-purple-600' },
   { number: 2, name: 'Agent', minPoints: 300, color: 'bg-blue-600' },
-  { number: 1, name: 'Analyst', minPoints: 150, color: 'bg-sky-500' },
+  { number: 1, name: 'Analyst', minPoints: 120, color: 'bg-sky-500' },
   { number: 0, name: 'None', minPoints: 0, color: 'bg-slate-500' },
 ];
 

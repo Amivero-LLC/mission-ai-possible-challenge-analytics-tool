@@ -186,7 +186,11 @@ def _seed_default_ranks() -> None:
                     """
                     INSERT INTO ranks (rank_number, rank_name, minimum_points, swag, total_raffle_tickets)
                     VALUES (:rank_number, :rank_name, :minimum_points, :swag, :total_raffle_tickets)
-                    ON CONFLICT(rank_number) DO NOTHING
+                    ON CONFLICT(rank_number) DO UPDATE SET
+                        rank_name=excluded.rank_name,
+                        minimum_points=excluded.minimum_points,
+                        swag=excluded.swag,
+                        total_raffle_tickets=excluded.total_raffle_tickets
                     """
                 ),
                 row,

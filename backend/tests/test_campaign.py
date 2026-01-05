@@ -181,8 +181,8 @@ def test_points_only_include_review_completed(session):
 
 def test_rank_thresholds(session):
     rows = [
-        _base_row(UserID="41", Email="rank0@example.com", PointsAwarded="149"),
-        _base_row(UserID="42", Email="rank1a@example.com", PointsAwarded="150"),
+        _base_row(UserID="41", Email="rank0@example.com", PointsAwarded="119"),
+        _base_row(UserID="42", Email="rank1a@example.com", PointsAwarded="120"),
         _base_row(UserID="43", Email="rank1b@example.com", PointsAwarded="299"),
         _base_row(UserID="44", Email="rank2@example.com", PointsAwarded="300"),
     ]
