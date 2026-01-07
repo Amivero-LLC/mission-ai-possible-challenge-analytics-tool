@@ -65,6 +65,11 @@ export default function Header({ onExportCSV, onExportExcel, isLoading = false }
         isActive: path.startsWith('/admin/users'),
       },
       {
+        href: '/admin/models',
+        label: 'Model admin',
+        isActive: path.startsWith('/admin/models'),
+      },
+      {
         href: '/admin/audit',
         label: 'Audit trail',
         isActive: path.startsWith('/admin/audit'),

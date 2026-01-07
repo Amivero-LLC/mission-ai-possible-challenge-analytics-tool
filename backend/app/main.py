@@ -7,17 +7,25 @@ from typing import Dict, List, Optional
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import text
+from sqlalchemy import delete, func, select, text
+from sqlalchemy.orm import Session
 
 from .auth import models as auth_models  # noqa: F401
-from .auth.dependencies import get_current_user, require_admin
+from .auth.dependencies import get_current_user, get_db, require_admin
 from .auth.models import AuthUser
 from .auth.routes import admin_router as auth_admin_router
 from .auth.routes import auth_router, setup_router
 from .campaign import campaign_router
 from .campaign.service import DEFAULT_RANK_ROWS
 from .db import Base, engine, get_engine_info
+from .db import crud as db_crud
+from .db.models import ChallengeAttempt, Chat, Model
 from .schemas import (
+    AdminModel,
+    AdminModelDeleteResponse,
+    AdminModelListResponse,
+    AdminModelSyncResponse,
+    AdminModelUpdateRequest,
     ChallengesResponse,
     DashboardResponse,
     DatabaseStatus,
@@ -27,15 +35,16 @@ from .schemas import (
     UsersResponse,
 )
 from .services.dashboard import (
+    _fetch_remote_models,
     build_challenges_response,
     build_dashboard_response,
     build_users_response,
     reload_all,
     reload_chats,
-    reload_models,
     reload_users,
 )
-from .services.data_store import get_latest_status, get_recent_logs, get_row_counts
+from .services.data_store import get_latest_status, get_recent_logs, get_row_counts, record_custom_reload
+from .services.model_admin import collect_model_identifiers, serialize_model, sync_models, update_model
 
 
 def _configure_logging() -> None:
@@ -487,10 +496,81 @@ def reload_chats_resource(
     return _to_reload_run(result)
 
 
-@app.post("/admin/db/reload/models", response_model=ReloadRun)
-def reload_models_resource(
-    options: ReloadRequest = Body(default=ReloadRequest()),
-    current_user: AuthUser = Depends(require_admin),
-) -> ReloadRun:
-    result = reload_models(mode=options.mode)
-    return _to_reload_run(result)
+@app.get("/api/admin/models", response_model=AdminModelListResponse)
+def list_admin_models(
+    _: AuthUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> AdminModelListResponse:
+    rows = db.execute(select(Model).order_by(Model.name.asc(), Model.id.asc())).scalars().all()
+    models = [AdminModel(**serialize_model(row)) for row in rows]
+    return AdminModelListResponse(models=models)
+
+
+@app.patch("/api/admin/models/{model_id:path}", response_model=AdminModel)
+def update_admin_model(
+    model_id: str,
+    payload: AdminModelUpdateRequest,
+    _: AuthUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> AdminModel:
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No updates supplied.")
+    try:
+        model = update_model(db, model_id, updates)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Model not found.")
+    return AdminModel(**serialize_model(model))
+
+
+@app.post("/api/admin/models/sync", response_model=AdminModelSyncResponse)
+def sync_admin_models(
+    _: AuthUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> AdminModelSyncResponse:
+    records = _fetch_remote_models()
+    if records is None:
+        raise HTTPException(status_code=503, detail="Unable to fetch models from Open WebUI.")
+
+    previous_count = db_crud.get_row_count(db, Model)
+    rows = sync_models(db, records)
+    total_count = db_crud.get_row_count(db, Model)
+    new_records = max(total_count - previous_count, 0)
+
+    record_custom_reload(
+        resource="models",
+        mode="sync",
+        status="success",
+        message="Synced models from Open WebUI.",
+        rows=rows,
+        previous_count=previous_count,
+        new_records=new_records,
+        total_count=total_count,
+    )
+
+    return AdminModelSyncResponse(
+        status="success",
+        rows=rows,
+        message=f"Synchronized {rows} models from Open WebUI.",
+    )
+
+
+@app.delete("/api/admin/models/{model_id:path}", response_model=AdminModelDeleteResponse)
+def delete_admin_model(
+    model_id: str,
+    _: AuthUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> AdminModelDeleteResponse:
+    model = db.get(Model, model_id)
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found.")
+
+    identifiers = collect_model_identifiers(model)
+    identifiers_lower = {identifier.lower() for identifier in identifiers}
+    if identifiers_lower:
+        db.execute(delete(Chat).where(func.lower(Chat.model).in_(identifiers_lower)))
+        db.execute(delete(ChallengeAttempt).where(func.lower(ChallengeAttempt.mission_model).in_(identifiers_lower)))
+
+    db.delete(model)
+    db.commit()
+    return AdminModelDeleteResponse(status="success", message="Model deleted.")

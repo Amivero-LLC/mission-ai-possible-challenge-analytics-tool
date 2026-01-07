@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from time import perf_counter
 from threading import Lock
+from copy import deepcopy
 from typing import Dict, Iterable, List, Tuple
 
 from sqlalchemy import select
@@ -14,6 +15,7 @@ from ..db.models import Chat as ChatModel
 from ..db.models import Model as ModelModel
 from ..db.models import ReloadLog
 from ..db.models import User as UserModel
+from .model_admin import collect_model_identifiers
 
 
 logger = logging.getLogger(__name__)
@@ -287,6 +289,15 @@ def load_challenge_attempts() -> List[dict]:
             .all()
         )
 
+    model_week_by_alias: Dict[str, str] = {}
+    with get_db_session() as session:
+        models = session.execute(select(ModelModel)).scalars().all()
+        for model in models:
+            if model.maip_week is None:
+                continue
+            for identifier in collect_model_identifiers(model):
+                model_week_by_alias[str(identifier).lower()] = str(model.maip_week)
+
     attempts: List[dict] = []
     for row in rows:
         payload = {}
@@ -313,6 +324,12 @@ def load_challenge_attempts() -> List[dict]:
         mission_info.setdefault("mission_id", row.mission_id)
         if row.mission_week is not None:
             mission_info.setdefault("week", row.mission_week)
+        else:
+            model_key = (row.mission_model or "").lower()
+            if model_key:
+                week = model_week_by_alias.get(model_key)
+                if week:
+                    mission_info.setdefault("week", week)
 
         attempts.append(payload)
 
@@ -342,9 +359,22 @@ def load_users() -> Tuple[Dict[str, dict], Dict[str, dict]]:
 
 def load_models() -> List[dict]:
     with get_db_session() as session:
-        rows = session.execute(select(ModelModel.data)).scalars().all()
-    logger.debug("Loaded %d models from database", len(rows))
-    return list(rows)
+        rows = session.execute(select(ModelModel)).scalars().all()
+
+    records: List[dict] = []
+    for row in rows:
+        payload = deepcopy(row.data) if isinstance(row.data, dict) else {}
+        payload.setdefault("id", row.id)
+        if row.maip_week is not None:
+            payload["maip_week"] = row.maip_week
+        if row.maip_points is not None:
+            payload["maip_points"] = row.maip_points
+        if row.maip_difficulty is not None:
+            payload["maip_difficulty"] = row.maip_difficulty
+        records.append(payload)
+
+    logger.debug("Loaded %d models from database", len(records))
+    return records
 
 
 def get_latest_status(resource: str | None = None) -> ReloadLog | None:

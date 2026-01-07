@@ -152,6 +152,39 @@ class DashboardResponse(BaseModel):
     challenge_attempts: List["ChallengeAttemptRecord"] = Field(default_factory=list)
 
 
+class AdminModel(BaseModel):
+    id: str
+    name: Optional[str] = None
+    maip_week: Optional[str] = None
+    maip_points: Optional[int] = None
+    maip_difficulty: Optional[str] = None
+    is_challenge: bool
+    updated_at: Optional[str] = None
+
+
+class AdminModelListResponse(BaseModel):
+    models: List[AdminModel] = Field(default_factory=list)
+
+
+class AdminModelUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    maip_week: Optional[str] = None
+    maip_points: Optional[int] = None
+    maip_difficulty: Optional[str] = None
+    is_challenge: Optional[bool] = None
+
+
+class AdminModelSyncResponse(BaseModel):
+    status: str
+    rows: int
+    message: Optional[str] = None
+
+
+class AdminModelDeleteResponse(BaseModel):
+    status: str
+    message: Optional[str] = None
+
+
 class ChallengeAttempt(BaseModel):
     challenge_name: str
     challenge_id: str

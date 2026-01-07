@@ -9,6 +9,13 @@ import type {
   RegisterStartResponse,
   TokenPair,
 } from "../types/auth";
+import type {
+  AdminModel,
+  AdminModelDeleteResponse,
+  AdminModelListResponse,
+  AdminModelSyncResponse,
+  AdminModelUpdateRequest,
+} from "../types/adminModels";
 
 type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
@@ -209,4 +216,29 @@ export async function syncAdminUsers(payload: { emails: string[]; source?: strin
 
 export async function fetchAuditLog(): Promise<{ entries: AuditEntry[] }> {
   return authRequest<undefined, { entries: AuditEntry[] }>("/api/admin/audit");
+}
+
+export async function fetchAdminModels(): Promise<AdminModelListResponse> {
+  return authRequest<undefined, AdminModelListResponse>("/api/admin/models");
+}
+
+export async function updateAdminModel(id: string, payload: AdminModelUpdateRequest): Promise<AdminModel> {
+  const safeId = encodeURIComponent(id);
+  return authRequest<AdminModelUpdateRequest, AdminModel>(`/api/admin/models/${safeId}`, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export async function syncAdminModels(): Promise<AdminModelSyncResponse> {
+  return authRequest<undefined, AdminModelSyncResponse>("/api/admin/models/sync", {
+    method: "POST",
+  });
+}
+
+export async function deleteAdminModel(id: string): Promise<AdminModelDeleteResponse> {
+  const safeId = encodeURIComponent(id);
+  return authRequest<undefined, AdminModelDeleteResponse>(`/api/admin/models/${safeId}`, {
+    method: "DELETE",
+  });
 }

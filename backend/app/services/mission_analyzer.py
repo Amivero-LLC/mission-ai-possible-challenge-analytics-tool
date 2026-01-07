@@ -126,22 +126,17 @@ class MissionAnalyzer:
 
         # Success indicators (keywords in AI responses that indicate success)
         self.success_keywords = [
-            "congratulations",
-            "you did it",
-            "success",
-            "well done",
-            "you found it",
-            "unlocked",
-            "revealed",
             "mission accomplished",
-            "you passed",
             "challenge complete",
-            "great job",
-            "excellent work",
-            "you succeeded",
-            "you got it",
+            "challenge completed",
             "mission_code:314-ghost",
+            "mission code:314 ghost",
             "mission complete",
+            "mission completed",
+            "perfect mission",
+            "mission evaluation complete",
+            "challenges complete",
+            "challenges completed",
         ]
         # Normalize keywords so substring checks remain case-insensitive.
         self.success_keywords = [keyword.lower() for keyword in self.success_keywords]
@@ -454,12 +449,14 @@ class MissionAnalyzer:
                     week_str = val
                     break
 
-        # Convert week string to int
+        # Convert week string to int (supports "Week 1" formats)
         if week_str:
-            try:
-                week = int(week_str)
-            except (ValueError, TypeError):
-                week = None
+            match = re.search(r"(\d+)", str(week_str))
+            if match:
+                try:
+                    week = int(match.group(1))
+                except (ValueError, TypeError):
+                    week = None
 
         # Extract challenge number from model name as fallback
         model_str = str(model_name).lower()
@@ -664,11 +661,10 @@ class MissionAnalyzer:
         if mission_model is not None:
             return self.check_success_for_mission(messages, mission_model)
 
-        for msg in messages:
-            if msg.get("role") == "assistant":
-                content = msg.get("content", "").lower()
-                if any(keyword in content for keyword in self.success_keywords):
-                    return True
+        for msg in self._iter_success_candidate_messages(messages):
+            content = msg.get("content", "").lower()
+            if any(keyword in content for keyword in self.success_keywords):
+                return True
         return False
 
     def _build_attempt_identifier(self, chat_id, mission_model, mission_info, chat_index):
@@ -697,18 +693,32 @@ class MissionAnalyzer:
         if mission_key is None:
             return False
 
-        for msg in messages:
-            if msg.get("role") != "assistant":
-                continue
-            msg_mission = self._get_message_mission_id(msg)
-            if msg_mission is None:
-                continue
-            if self._canonical_mission_key(msg_mission) != mission_key:
-                continue
+        for msg in self._iter_success_candidate_messages(messages, mission_key=mission_key):
             content = msg.get("content", "").lower()
             if any(keyword in content for keyword in self.success_keywords):
                 return True
         return False
+
+    def _iter_success_candidate_messages(self, messages, mission_key=None):
+        """
+        Yield assistant messages excluding the first assistant response.
+        When mission_key is provided, only messages tied to that mission are considered,
+        and the first assistant message for that mission is skipped.
+        """
+        first_assistant_seen = False
+        for msg in messages:
+            if msg.get("role") != "assistant":
+                continue
+            if mission_key is not None:
+                msg_mission = self._get_message_mission_id(msg)
+                if msg_mission is None:
+                    continue
+                if self._canonical_mission_key(msg_mission) != mission_key:
+                    continue
+            if not first_assistant_seen:
+                first_assistant_seen = True
+                continue
+            yield msg
 
     def _register_mission_attempt(
         self,
@@ -985,6 +995,9 @@ class MissionAnalyzer:
                     model_week = self._lookup_week_for_model(mission_model)
                 if not model_week or str(model_week) != str(filter_week):
                     continue
+
+            if mission_info.get("week") is None:
+                mission_info["week"] = self._lookup_week_for_model(mission_model)
 
             if "chat_num" not in mission_data:
                 mission_data["chat_num"] = len(self.mission_chats) + 1
@@ -1269,8 +1282,10 @@ class MissionAnalyzer:
         # Sort by user name
         users_list.sort(key=lambda x: x["user_name"])
 
+        total_chats = len(missions_list)
+
         return {
-            "total_chats": len(self.data),
+            "total_chats": total_chats,
             "mission_attempts": total_attempts,
             "mission_completions": total_completions,
             "success_rate": success_rate,
@@ -1481,6 +1496,15 @@ class MissionAnalyzer:
             if user_id and user_id != "Unknown":
                 all_users.add(user_id)
 
+        if not all_users:
+            for chat in self.mission_chats:
+                user_id = chat.get("user_id")
+                if user_id:
+                    all_users.add(user_id)
+            for user_id in self.user_stats.keys():
+                if user_id:
+                    all_users.add(user_id)
+
         # Initialize all users in the challenge data
         for user_id in all_users:
             user_challenge_data[user_id]["user_id"] = user_id
@@ -1504,18 +1528,25 @@ class MissionAnalyzer:
                 "messages": chat["messages"],
             }
             user_challenge_data[user_id]["conversations"].append(conv_data)
+            if not user_challenge_data[user_id]["user_name"]:
+                user_challenge_data[user_id]["user_name"] = self.get_user_name(user_id)
 
             # Track completion
             if chat["completed"] and not user_challenge_data[user_id]["completed"]:
                 user_challenge_data[user_id]["completed"] = True
                 # Find the exact message that triggered success
+                first_assistant_seen = False
                 for idx, msg in enumerate(chat["messages"]):
-                    if msg.get("role") == "assistant":
-                        content = msg.get("content", "").lower()
-                        if any(keyword in content for keyword in self.success_keywords):
-                            user_challenge_data[user_id]["completion_time"] = chat["created_at"]
-                            user_challenge_data[user_id]["completion_message_index"] = idx
-                            break
+                    if msg.get("role") != "assistant":
+                        continue
+                    if not first_assistant_seen:
+                        first_assistant_seen = True
+                        continue
+                    content = msg.get("content", "").lower()
+                    if any(keyword in content for keyword in self.success_keywords):
+                        user_challenge_data[user_id]["completion_time"] = chat["created_at"]
+                        user_challenge_data[user_id]["completion_message_index"] = idx
+                        break
 
         # Third pass: calculate metrics for each user
         results = []

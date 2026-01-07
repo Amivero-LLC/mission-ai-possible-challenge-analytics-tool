@@ -475,41 +475,59 @@ def update_admin_user(db: Session, user_id: str, payload: AdminUserUpdateRequest
     return user
 
 
-def sync_users_from_emails(db: Session, payload: UserSyncRequest, actor: AuthUser) -> int:
-    emails = {email.lower() for email in payload.emails}
-    # include existing analytics users if manual list empty
-    if not emails:
-        analytics_emails = db.scalars(
-            select(AnalyticsUser.email).where(AnalyticsUser.email.isnot(None))
-        ).all()
-        emails.update(email.lower() for email in analytics_emails if email)
+def sync_users_from_openwebui(db: Session, payload: UserSyncRequest, actor: AuthUser) -> int:
+    from ..services.dashboard import _fetch_remote_users
 
+    result = _fetch_remote_users()
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Unable to fetch users from Open WebUI.")
+
+    _, records = result
     created = 0
-    for email in emails:
-        if not email:
+    updated = 0
+    seen_emails: set[str] = set()
+    source = payload.source if payload.source and payload.source != "manual" else "openwebui"
+
+    for record in records:
+        if not isinstance(record, dict):
             continue
+        email = (record.get("email") or "").strip().lower()
+        if not email or email in seen_emails:
+            continue
+        seen_emails.add(email)
+
+        display_name = (record.get("name") or "").strip() or None
+
         user = db.scalar(select(AuthUser).where(func.lower(AuthUser.email) == email))
         if user:
+            if display_name and user.username != display_name:
+                user.username = display_name
+                updated += 1
+            if not user.source:
+                user.source = source
             continue
+
         db.add(
             AuthUser(
                 email=email,
+                username=display_name,
                 auth_provider=AuthProvider.LOCAL,
                 is_approved=False,
                 is_active=True,
                 email_verified=False,
                 role=AuthRole.USER if get_auth_config().feature_role_user_enabled else AuthRole.ADMIN,
-                source=payload.source,
+                source=source,
             )
         )
         created += 1
+
     db.flush()
     _record_audit(
         db,
         action="sync_users",
         actor=actor,
         subject=None,
-        details={"created": created, "source": payload.source},
+        details={"created": created, "updated": updated, "source": source},
     )
     return created
 

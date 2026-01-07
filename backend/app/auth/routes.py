@@ -45,7 +45,7 @@ from .service import (
     revoke_refresh_token,
     start_oauth_flow,
     start_registration,
-    sync_users_from_emails,
+    sync_users_from_openwebui,
     update_admin_user,
     verify_email,
 )
@@ -249,7 +249,7 @@ def sync_users(
     current: AuthUser = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> dict:
-    created = sync_users_from_emails(db, payload, actor=current)
+    created = sync_users_from_openwebui(db, payload, actor=current)
     return {"created": created}
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy import delete, func, select
@@ -88,6 +89,96 @@ def _extract_maip_metadata(record: dict) -> Tuple[Optional[str], Optional[int], 
     return maip_week, maip_points, maip_difficulty
 
 
+def _infer_maip_from_name(name: Optional[str]) -> Tuple[Optional[str], Optional[int], Optional[str]]:
+    if not name:
+        return None, None, None
+
+    text = str(name).strip()
+    if not text:
+        return None, None, None
+
+    week_value: Optional[str] = None
+    difficulty_value: Optional[str] = None
+    points_value: Optional[int] = None
+
+    week_match = re.search(r"week\s*(\d+)", text, flags=re.IGNORECASE)
+    if week_match:
+        week_value = f"Week {week_match.group(1)}"
+
+    difficulty_map = {
+        "very easy": ("Very Easy", 10),
+        "easy": ("Easy", 15),
+        "medium": ("Medium", 20),
+        "hard": ("Hard", 25),
+        "impossible": ("Impossible", 30),
+    }
+    lower_text = text.lower()
+    for key, (label, points) in difficulty_map.items():
+        if key in lower_text:
+            difficulty_value = label
+            points_value = points
+            break
+
+    return week_value, points_value, difficulty_value
+
+
+def _normalize_identifier(value: object) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
+
+
+def _record_has_missions_tag(record: dict) -> bool:
+    if not isinstance(record, dict):
+        return False
+    for candidate in (
+        record.get("tags"),
+        record.get("meta", {}).get("tags") if isinstance(record.get("meta"), dict) else None,
+        record.get("info", {}).get("meta", {}).get("tags") if isinstance(record.get("info"), dict) else None,
+    ):
+        if isinstance(candidate, list):
+            for entry in candidate:
+                name = None
+                if isinstance(entry, dict):
+                    name = entry.get("name")
+                elif isinstance(entry, str):
+                    name = entry
+                if name and isinstance(name, str) and name.strip().lower() == "missions":
+                    return True
+    return False
+
+
+def _collect_model_identifiers(record: dict, model_id: Optional[str] = None) -> set[str]:
+    identifiers: set[str] = set()
+    if model_id:
+        identifiers.add(str(model_id))
+
+    def add(value: object) -> None:
+        normalized = _normalize_identifier(value)
+        if normalized:
+            identifiers.add(normalized)
+
+    for key in ("id", "slug", "model", "preset", "name", "display_name", "displayName", "model_id"):
+        add(record.get(key))
+
+    meta = record.get("meta")
+    if isinstance(meta, dict):
+        for key in ("id", "slug", "model", "preset", "name"):
+            add(meta.get(key))
+
+    info = record.get("info")
+    if isinstance(info, dict):
+        for key in ("id", "slug", "model", "preset", "name"):
+            add(info.get(key))
+        info_meta = info.get("meta")
+        if isinstance(info_meta, dict):
+            for key in ("id", "slug", "model", "preset", "name"):
+                add(info_meta.get(key))
+
+    return identifiers
+
+
 def upsert_users(session: Session, records: Iterable[dict]) -> int:
     """Insert or update user records, preserving the raw payload for fidelity."""
     affected = 0
@@ -106,15 +197,13 @@ def upsert_users(session: Session, records: Iterable[dict]) -> int:
         }
 
         if existing:
-            for field, value in normalized.items():
-                setattr(existing, field, value)
-        else:
-            session.add(
-                User(
-                    id=user_id,
-                    **normalized,
-                )
+            continue
+        session.add(
+            User(
+                id=user_id,
+                **normalized,
             )
+        )
         affected += 1
 
     return affected
@@ -141,24 +230,27 @@ def upsert_models(session: Session, records: Iterable[dict]) -> int:
             or record.get("model")
         )
         maip_week, maip_points, maip_difficulty = _extract_maip_metadata(record)
+        if not maip_week or maip_points is None or not maip_difficulty:
+            inferred_week, inferred_points, inferred_difficulty = _infer_maip_from_name(display_name)
+            if not maip_week and inferred_week:
+                maip_week = inferred_week
+            if maip_points is None and inferred_points is not None:
+                maip_points = inferred_points
+            if not maip_difficulty and inferred_difficulty:
+                maip_difficulty = inferred_difficulty
 
         if existing:
-            existing.name = display_name
-            existing.data = record
-            existing.maip_week = maip_week
-            existing.maip_points = maip_points
-            existing.maip_difficulty = maip_difficulty
-        else:
-            session.add(
-                Model(
-                    id=model_id,
-                    name=display_name,
-                    data=record,
-                    maip_week=maip_week,
-                    maip_points=maip_points,
-                    maip_difficulty=maip_difficulty,
-                )
+            continue
+        session.add(
+            Model(
+                id=model_id,
+                name=display_name,
+                data=record,
+                maip_week=maip_week,
+                maip_points=maip_points,
+                maip_difficulty=maip_difficulty,
             )
+        )
         affected += 1
     return affected
 
@@ -209,6 +301,20 @@ def upsert_chats(session: Session, records: Iterable[dict]) -> int:
     """Insert chat transcripts while preserving mission-specific metadata."""
     affected = 0
     ensured_users: set[str] = set()
+    challenge_aliases: set[str] = set()
+    challenge_aliases_lower: set[str] = set()
+
+    model_rows = session.execute(select(Model.id, Model.data)).all()
+    for model_id, model_data in model_rows:
+        if not isinstance(model_data, dict):
+            continue
+        if not _record_has_missions_tag(model_data):
+            continue
+        identifiers = _collect_model_identifiers(model_data, model_id)
+        for identifier in identifiers:
+            challenge_aliases.add(identifier)
+            challenge_aliases_lower.add(identifier.lower())
+
     for record in records:
         chat_id = record.get("id")
         if not chat_id:
@@ -216,12 +322,6 @@ def upsert_chats(session: Session, records: Iterable[dict]) -> int:
 
         chat_data = record.get("chat") or {}
         user_id = record.get("user_id") or chat_data.get("user_id")
-        if user_id:
-            if user_id not in ensured_users:
-                if not session.get(User, user_id):
-                    placeholder = _build_placeholder_user(record, user_id)
-                    session.add(User(id=user_id, **placeholder))
-                ensured_users.add(user_id)
         title = record.get("title") or chat_data.get("title")
         models = chat_data.get("models", [])
         primary_model = None
@@ -235,6 +335,21 @@ def upsert_chats(session: Session, records: Iterable[dict]) -> int:
                     or candidate.get("model")
                     or candidate.get("slug")
                 )
+        if primary_model is None:
+            primary_model = chat_data.get("model") or record.get("model")
+
+        if not primary_model or not challenge_aliases_lower:
+            continue
+
+        if str(primary_model).lower() not in challenge_aliases_lower:
+            continue
+
+        if user_id:
+            if user_id not in ensured_users:
+                if not session.get(User, user_id):
+                    placeholder = _build_placeholder_user(record, user_id)
+                    session.add(User(id=user_id, **placeholder))
+                ensured_users.add(user_id)
 
         messages = chat_data.get("messages") or []
         message_count = len(messages) if isinstance(messages, list) else None

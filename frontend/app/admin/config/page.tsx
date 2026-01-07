@@ -229,8 +229,6 @@ export default function AdminConfigPage() {
     [reloadMode, summarizeRuns],
   );
 
-  const truncateDisabledForUsers = reloadMode === "truncate";
-
   const lastRunSummary = useMemo(() => {
     if (lastReloadRuns.length === 0) {
       return null;
@@ -348,7 +346,7 @@ export default function AdminConfigPage() {
                     />
                     Truncate (full reset)
                   </label>
-                  {truncateDisabledForUsers && (
+                  {reloadMode === "truncate" && (
                     <span className="text-xs text-slate-500">
                       Truncate is only supported when using the Reload All action.
                     </span>
@@ -366,23 +364,6 @@ export default function AdminConfigPage() {
                 style={{ backgroundColor: "#2563eb", color: "#fff" }}
               >
                 {adminLoading ? "Working..." : `Reload All (${reloadMode})`}
-              </button>
-              <button
-                type="button"
-                className="filter-button secondary"
-                onClick={() => handleReload("models")}
-                disabled={adminLoading}
-              >
-                Reload Models
-              </button>
-              <button
-                type="button"
-                className="filter-button secondary"
-                onClick={() => handleReload("users")}
-                disabled={adminLoading || truncateDisabledForUsers}
-                title={truncateDisabledForUsers ? "Switch to upsert mode to reload users." : undefined}
-              >
-                Reload Users
               </button>
               <button
                 type="button"

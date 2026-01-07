@@ -236,6 +236,14 @@ def _extract_model_metadata(records: Iterable[dict]) -> Tuple[Dict[str, str], Se
                         if not maip_difficulty:
                             maip_difficulty = custom_params.get("maip_difficulty_level")
 
+        # Fallback to top-level fields (used when admin edits override missing custom_params)
+        if not maip_week:
+            maip_week = item.get("maip_week")
+        if not maip_points:
+            maip_points = item.get("maip_points") or item.get("maip_points_value")
+        if not maip_difficulty:
+            maip_difficulty = item.get("maip_difficulty") or item.get("maip_difficulty_level")
+
         # Only process models with the "Missions" tag
         has_missions_tag = any(tag.lower() == "missions" for tag in tags)
         if not has_missions_tag:
@@ -278,8 +286,12 @@ def _load_model_metadata(
         remote_records = _fetch_remote_models()
         if remote_records:
             persist_models(remote_records, mode=mode)
-            records = remote_records
             logger.info("Loaded %d models from OpenWebUI API (force refresh)", len(remote_records))
+            records = load_models()
+            if records:
+                logger.debug("Using merged model metadata from database cache after refresh")
+            else:
+                records = remote_records
 
     if not records:
         records = load_models()
@@ -825,6 +837,8 @@ def _build_chat_previews(
         mission_info = mission_chat.get("mission_info") or {}
         mission_model = mission_chat.get("model")
         mission_week = mission_info.get("week")
+        if mission_week is None:
+            mission_week = analyzer._lookup_week_for_model(mission_model)
         mission_display_name = mission_info.get("mission_id") or model_lookup.get(mission_model, mission_model)
         completed = mission_chat.get("completed", False)
 
@@ -953,9 +967,10 @@ def _decorate_leaderboard(
 
 
 def _decorate_summary(analyzer: MissionAnalyzer, raw_summary: dict, user_info_map: Dict[str, dict]) -> Summary:
+    total_users = len(raw_summary.get("users_list", []))
     participation_rate = (
-        raw_summary["unique_users"] / raw_summary["total_chats"] * 100
-        if raw_summary["total_chats"]
+        raw_summary["unique_users"] / total_users * 100
+        if total_users
         else 0.0
     )
 

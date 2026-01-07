@@ -1152,7 +1152,7 @@ export default function DashboardContent({ initialData, setExportCallbacks, setH
 
       <section className="stats-grid">
         <article className="stat-card">
-          <p className="stat-label">Total Chats</p>
+          <p className="stat-label">Total Challenges</p>
           <p className="stat-value">{formatNumber(dashboard.summary.total_chats)}</p>
           <p className="stat-sublabel">In System</p>
         </article>

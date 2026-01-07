@@ -182,7 +182,7 @@ export default function AdminUsersPage() {
                 disabled={isSyncing}
                 className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
               >
-                {isSyncing ? "Syncing..." : "Sync Open WebUI"}
+                {isSyncing ? "Syncing..." : "Sync Users"}
               </button>
             </div>
             <AdminNavigation />
